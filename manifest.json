@@ -1,14 +1,29 @@
 {
   "manifest_version": 3,
-  "name": "Airbnb Persona Creator",
+  "name": "AirPersona",
   "version": "1.0",
   "description": "Scrapes Airbnb profiles and creates detailed personas with AI enhancement",
   "permissions": [
     "activeTab",
     "scripting",
     "storage",
-    "downloads"
+    "downloads",
+    "https://cdnjs.cloudflare.com/ajax/libs/jspdf/*"
   ],
+   "action": {
+    "default_popup": "popup.html",
+    "default_title": "AIr Persona Creator",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
   "host_permissions": [
     "https://*.airbnb.com/*",
     "https://*.airbnb.co.in/*",

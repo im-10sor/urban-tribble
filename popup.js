@@ -1,29 +1,38 @@
 document.addEventListener('DOMContentLoaded', function() {
-  // Configuration - Now loaded from environment
+  // ========== CONFIGURATION ==========
   const CONFIG = {
     BACKEND_URL: 'https://bnb-ai-backend.onrender.com',
     // FRAPPE_SERVER_URL will be set after authentication
   };
 
-  // Cached DOM elements
+  // ========== DOM ELEMENTS ==========
+  // Authentication elements
   const authSection = document.getElementById('auth-section');
   const mainSection = document.getElementById('main-section');
   const exportSection = document.getElementById('export-section');
   const userWelcome = document.getElementById('user-welcome');
   const loginBtn = document.getElementById('login-btn');
   const logoutBtn = document.getElementById('logout-btn');
-  const createPersonaBtn = document.getElementById('create-persona');
-  const downloadPdfBtn = document.getElementById('download-pdf');
-  const sendToServerBtn = document.getElementById('send-to-server');
+  
+  // Input fields
   const employeeIdInput = document.getElementById('employee-id');
   const employeePinInput = document.getElementById('employee-pin');
-  const createEmployeeBtn = document.getElementById('create-employee-btn');
   const employeeIdInputNew = document.getElementById('employee-id-input');
   const employeeNameInputNew = document.getElementById('employee-name-input');
   const employeePinInputNew = document.getElementById('employee-pin-input');
   const masterPinInputNew = document.getElementById('master-pin-input');
+  
+  // Action buttons
+  const createPersonaBtn = document.getElementById('create-persona');
+  const downloadPdfBtn = document.getElementById('download-pdf');
+  const sendToServerBtn = document.getElementById('send-to-server');
+  const createEmployeeBtn = document.getElementById('create-employee-btn');
+  const scrapeBtn = document.getElementById('scrape');
+  const scrapeGptBtn = document.getElementById('scrape-gpt');
+  const exportPdfBtn = document.getElementById('export-pdf');
+  const exportEnhancedPdfBtn = document.getElementById('export-enhanced-pdf');
 
-  // State variables
+  // ========== STATE VARIABLES ==========
   let isAuthenticated = false;
   let currentToken = null;
   let currentEmployee = null;
@@ -31,9 +40,409 @@ document.addEventListener('DOMContentLoaded', function() {
   let enhancedData = null;
   let frappeServerUrl = null;
 
-  // Initialize UI
+  // ========== INITIALIZATION ==========
   initializeUI();
 
+  // ========== EVENT LISTENERS ==========
+  // Authentication
+  if (loginBtn) loginBtn.addEventListener('click', handleLogin);
+  if (logoutBtn) logoutBtn.addEventListener('click', handleLogout);
+  
+  // Employee management
+  if (createEmployeeBtn) {
+    createEmployeeBtn.addEventListener('click', handleCreateEmployee);
+  }
+  
+  // Scraping and export
+  if (createPersonaBtn) createPersonaBtn.addEventListener('click', handleCreatePersona);
+  if (downloadPdfBtn) downloadPdfBtn.addEventListener('click', handleDownloadPdf);
+  if (sendToServerBtn) sendToServerBtn.addEventListener('click', handleSendToServer);
+  
+  // Additional scraping buttons
+  if (scrapeBtn) scrapeBtn.addEventListener('click', () => executeScraping(false));
+  if (scrapeGptBtn) scrapeGptBtn.addEventListener('click', () => executeScraping(true));
+  if (exportPdfBtn) exportPdfBtn.addEventListener('click', handleDownloadPdf);
+  if (exportEnhancedPdfBtn) exportEnhancedPdfBtn.addEventListener('click', handleDownloadEnhancedPdf);
+
+  // Enter key support for login
+  if (employeePinInput) {
+    employeePinInput.addEventListener('keypress', function(e) {
+      if (e.key === 'Enter') handleLogin();
+    });
+  }
+
+  // ========== MESSAGE LISTENER ==========
+  chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
+    switch (request.action) {
+      case "scrapingComplete":
+        handleScrapingComplete(request.data);
+        break;
+      case "gptProcessingComplete":
+        handleGptProcessingComplete(request.data);
+        break;
+      case "error":
+        updateStatus('Error: ' + request.message, 'error');
+        break;
+      case "noActiveTab":
+        updateStatus('Error: Please navigate to an Airbnb profile page first.', 'error');
+        break;
+      case "pdfExportComplete":
+        updateStatus('PDF exported successfully!', 'success');
+        break;
+      case "pdfExportFailed":
+        updateStatus('PDF export failed: ' + request.message, 'error');
+        break;
+    }
+    return true;
+  });
+
+  // ========== CORE FUNCTIONS ==========
+  
+  // --- Initialization ---
+  async function initializeUI() {
+    // Show admin banner initially
+    document.getElementById('admin-banner').style.display = 'block';
+    
+    // Load session and check admin status
+    await loadSavedSession();
+    await checkAdminStatus();
+    
+    // Load saved scraped/enhanced data
+    chrome.storage.local.get(['lastScrapedData', 'lastEnhancedData'], function(data) {
+      if (data.lastScrapedData) window.lastScrapedData = data.lastScrapedData;
+      if (data.lastEnhancedData) window.lastEnhancedData = data.lastEnhancedData;
+    });
+  }
+
+  // --- Authentication Functions ---
+  async function loadSavedSession() {
+    chrome.storage.local.get(['authToken', 'currentUser', 'frappeServerUrl'], async function(result) {
+      if (result.authToken && result.currentUser) {
+        updateStatus('Verifying saved session...', 'loading');
+        try {
+          const valid = await verifyToken(result.authToken);
+          if (valid) {
+            currentToken = result.authToken;
+            currentEmployee = result.currentUser;
+            frappeServerUrl = result.frappeServerUrl;
+            isAuthenticated = true;
+            showMainInterface();
+            updateStatus('Welcome back, ' + currentEmployee.name, 'success');
+            return;
+          }
+        } catch (error) {
+          console.error('Session validation failed:', error);
+          // Token invalid, clear storage
+          chrome.storage.local.remove(['authToken', 'currentUser', 'frappeServerUrl']);
+        }
+      }
+      // Show auth UI if no valid session
+      authSection.style.display = 'block';
+      mainSection.style.display = 'none';
+      exportSection.style.display = 'none';
+    });
+  }
+
+  async function handleLogin() {
+    const employeeId = employeeIdInput.value.trim();
+    const pin = employeePinInput.value.trim();
+
+    if (!employeeId || !pin) {
+      updateStatus('Please enter employee ID and PIN.', 'error');
+      return;
+    }
+    
+    try {
+      updateStatus('Logging in...', 'loading');
+      loginBtn.disabled = true;
+      const result = await authenticateEmployee(employeeId, pin);
+      if (result.success) {
+        currentToken = result.token;
+        currentEmployee = result.employee;
+        frappeServerUrl = result.frappeServerUrl;
+        isAuthenticated = true;
+        chrome.storage.local.set({ 
+          authToken: currentToken, 
+          currentUser: currentEmployee,
+          frappeServerUrl: frappeServerUrl
+        });
+        showMainInterface();
+        updateStatus('Login successful! Welcome, ' + currentEmployee.name, 'success');
+      } else {
+        updateStatus(result.message || 'Login failed', 'error');
+      }
+    } catch (err) {
+      updateStatus(err.message || 'Login error', 'error');
+    } finally {
+      loginBtn.disabled = false;
+    }
+  }
+
+  function handleLogout() {
+    isAuthenticated = false;
+    currentToken = null;
+    currentEmployee = null;
+    scrapedData = null;
+    enhancedData = null;
+    chrome.storage.local.remove(['authToken', 'currentUser', 'frappeServerUrl', 'lastScrapedData', 'lastEnhancedData']);
+    authSection.style.display = 'block';
+    mainSection.style.display = 'none';
+    exportSection.style.display = 'none';
+    updateStatus('Logged out', 'info');
+  }
+
+  // --- Employee Management ---
+  async function handleCreateEmployee() {
+    const employeeId = employeeIdInputNew.value.trim();
+    const employeeName = employeeNameInputNew.value.trim();
+    const employeePin = employeePinInputNew.value.trim();
+    const masterPin = masterPinInputNew ? masterPinInputNew.value.trim() : '';
+    
+    if (!employeeId || !employeeName || !employeePin) {
+      updateStatus('Please fill in all fields', 'error');
+      return;
+    }
+    
+    await createEmployee(employeeId, employeeName, employeePin, masterPin);
+  }
+
+  async function createEmployee(employee_id, name, pin, masterPin) {
+    try {
+      const payload = { employee_id, name, pin };
+      if (masterPin) {
+        payload.masterPin = masterPin;
+      }
+
+      const data = await apiCall('/api/employees', {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      });
+
+      updateStatus(
+        data.success ? 'Employee created successfully!' : `Error: ${data.error || data.message || 'Unknown error'}`,
+        data.success ? 'success' : 'error'
+      );
+
+      if (data.success) {
+        // Clear input fields on success
+        employeeIdInputNew.value = '';
+        employeeNameInputNew.value = '';
+        employeePinInputNew.value = '';
+        if (masterPinInputNew) masterPinInputNew.value = '';
+      }
+    } catch (error) {
+      updateStatus('Error creating employee: ' + error.message, 'error');
+      console.error('Error creating employee:', error);
+    }
+  }
+
+  // --- Scraping Functions ---
+  function executeScraping(processWithGPT) {
+    chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
+      if (tabs.length === 0) {
+        updateStatus('Error: No active tab found.', 'error');
+        return;
+      }
+      
+      const currentTab = tabs[0];
+      if (!currentTab.url.includes('airbnb.co.in/users/show/') && !currentTab.url.includes('airbnb.com/users/show/')) {
+        updateStatus('Error: Please navigate to an Airbnb profile page first.', 'error');
+        return;
+      }
+      
+      updateStatus('Scraping profile...', 'loading');
+      
+      // Scrape directly from content script
+      chrome.tabs.sendMessage(currentTab.id, {
+        action: "scrapeProfile"
+      }, function(response) {
+        if (chrome.runtime.lastError) {
+          updateStatus('Error: ' + chrome.runtime.lastError.message, 'error');
+        } else if (response) {
+          // Save the scraped data
+          window.lastScrapedData = response;
+          chrome.storage.local.set({ lastScrapedData: response });
+          
+          if (processWithGPT) {
+            // Process with GPT via background
+            updateStatus('Processing with GPT...', 'loading');
+            chrome.runtime.sendMessage({
+              action: "scrapeProfile",
+              processWithGPT: true,
+              tabId: currentTab.id
+            });
+          } else {
+            updateStatus('Profile data scraped successfully!', 'success');
+          }
+        } else {
+          updateStatus('Scraping failed', 'error');
+        }
+      });
+    });
+  }
+
+  async function handleCreatePersona() {
+    if (!isAuthenticated) {
+      updateStatus('Please login first', 'error');
+      return;
+    }
+    
+    updateStatus('Scraping profile data...', 'loading');
+    
+    try {
+      const tabs = await chrome.tabs.query({active: true, currentWindow: true});
+      if (!tabs.length) {
+        updateStatus('No active tab found', 'error');
+        return;
+      }
+      
+      const currentTab = tabs[0];
+      if (!currentTab.url.includes('airbnb.co.in/users/show/') && !currentTab.url.includes('airbnb.com/users/show/')) {
+        updateStatus('Please navigate to an Airbnb profile page first.', 'error');
+        return;
+      }
+      
+      // First, scrape the profile directly from content script
+      const scrapedData = await new Promise((resolve, reject) => {
+        chrome.tabs.sendMessage(currentTab.id, {
+          action: "scrapeProfile"
+        }, function(response) {
+          if (chrome.runtime.lastError) {
+            reject(new Error(chrome.runtime.lastError.message));
+          } else if (response) {
+            resolve(response);
+          } else {
+            reject(new Error('Failed to scrape profile'));
+          }
+        });
+      });
+      
+      if (scrapedData) {
+        // Now process with GPT
+        updateStatus('Processing with AI...', 'loading');
+        const gptResult = await processWithBackendGPT(scrapedData);
+        
+        if (gptResult && gptResult.success) {
+          enhancedData = gptResult.processedData;
+          exportSection.style.display = 'block';
+          updateStatus('AI Persona created successfully!', 'success');
+          
+          // Save for download
+          const completeData = {
+            ...scrapedData,
+            persona: enhancedData,
+            employee_id: currentEmployee.id,
+            employee_name: currentEmployee.name,
+            timestamp: new Date().toISOString(),
+            profile_url: currentTab.url
+          };
+          
+          // Save to storage and global variables
+          scrapedData = completeData;
+          window.lastScrapedData = completeData;
+          window.lastEnhancedData = enhancedData;
+          
+          chrome.storage.local.set({ 
+            lastEnhancedData: enhancedData,
+            lastScrapedData: completeData 
+          });
+        }
+      }
+    } catch (error) {
+      updateStatus('Error: ' + error.message, 'error');
+      console.error('Create persona error:', error);
+    }
+  }
+
+  // --- Export Functions ---
+  async function handleDownloadPdf() {
+    if (!window.lastScrapedData) {
+      updateStatus('Error: Please scrape a profile first.', 'error');
+      return;
+    }
+    
+    try {
+      updateStatus('Generating PDF...', 'loading');
+      
+      // Send to background script for PDF generation
+      chrome.runtime.sendMessage({
+        action: "generatePDF",
+        data: window.lastScrapedData,
+        isEnhanced: false
+      });
+      
+    } catch (error) {
+      updateStatus('Download error: ' + error.message, 'error');
+    }
+  }
+
+  async function handleDownloadEnhancedPdf() {
+    if (!window.lastEnhancedData) {
+      updateStatus('Error: Please create an enhanced persona first.', 'error');
+      return;
+    }
+    
+    try {
+      updateStatus('Generating enhanced PDF...', 'loading');
+      
+      // Prepare data with persona
+      const enhancedDataForPdf = {
+        ...window.lastScrapedData,
+        persona: window.lastEnhancedData
+      };
+      
+      // Send to background script for PDF generation
+      chrome.runtime.sendMessage({
+        action: "generatePDF",
+        data: enhancedDataForPdf,
+        isEnhanced: true
+      });
+      
+    } catch (error) {
+      updateStatus('Download error: ' + error.message, 'error');
+    }
+  }
+
+  async function handleSendToServer() {
+    if (!scrapedData || !currentToken) {
+      updateStatus('No data to send', 'error');
+      return;
+    }
+    
+    updateStatus('Sending to server...', 'loading');
+    
+    try {
+      const result = await sendToFrappeServer(scrapedData, currentToken);
+      if (result.success) {
+        updateStatus('Data sent to server successfully!', 'success');
+        scrapedData = null;
+        exportSection.style.display = 'none';
+      } else {
+        updateStatus('Server error: ' + (result.message || 'Unknown error'), 'error');
+      }
+    } catch (error) {
+      updateStatus('Network error: ' + error.message, 'error');
+    }
+  }
+
+  // --- Message Handlers ---
+  function handleScrapingComplete(data) {
+    updateStatus('Profile data scraped successfully!', 'success');
+    window.lastScrapedData = data;
+    scrapedData = data;
+    chrome.storage.local.set({ lastScrapedData: data });
+  }
+
+  function handleGptProcessingComplete(data) {
+    updateStatus('Persona created successfully!', 'success');
+    window.lastEnhancedData = data;
+    enhancedData = data;
+    chrome.storage.local.set({ lastEnhancedData: data });
+    exportSection.style.display = 'block';
+  }
+
+  // ========== HELPER FUNCTIONS ==========
+  
   // --- API Helper Function ---
   async function apiCall(endpoint, options = {}) {
     try {
@@ -68,111 +477,6 @@ document.addEventListener('DOMContentLoaded', function() {
     } catch (error) {
       console.error('API call failed:', error);
       throw error;
-    }
-  }
-
-  // --- Initialize UI ---
-  async function initializeUI() {
-    // Show admin banner initially
-    document.getElementById('admin-banner').style.display = 'block';
-    
-    // Load session and check admin status
-    await loadSavedSession();
-    await checkAdminStatus();
-  }
-
-  // --- Load Saved Session ---
-  async function loadSavedSession() {
-    chrome.storage.local.get(['authToken', 'currentUser', 'frappeServerUrl'], async function(result) {
-      if (result.authToken && result.currentUser) {
-        updateStatus('Verifying saved session...', 'loading');
-        try {
-          const valid = await verifyToken(result.authToken);
-          if (valid) {
-            currentToken = result.authToken;
-            currentEmployee = result.currentUser;
-            frappeServerUrl = result.frappeServerUrl;
-            isAuthenticated = true;
-            showMainInterface();
-            updateStatus('Welcome back, ' + currentEmployee.name, 'success');
-            return;
-          }
-        } catch (error) {
-          console.error('Session validation failed:', error);
-          // Token invalid, clear storage
-          chrome.storage.local.remove(['authToken', 'currentUser', 'frappeServerUrl']);
-        }
-      }
-      // Show auth UI if no valid session
-      authSection.style.display = 'block';
-      mainSection.style.display = 'none';
-      exportSection.style.display = 'none';
-    });
-  }
-
-  // --- Employee Registration ---
-  if (createEmployeeBtn) {
-    createEmployeeBtn.addEventListener('click', async () => {
-      const employeeId = employeeIdInputNew.value.trim();
-      const employeeName = employeeNameInputNew.value.trim();
-      const employeePin = employeePinInputNew.value.trim();
-      const masterPin = masterPinInputNew ? masterPinInputNew.value.trim() : '';
-      
-      if (!employeeId || !employeeName || !employeePin) {
-        updateStatus('Please fill in all fields', 'error');
-        return;
-      }
-      
-      await createEmployee(employeeId, employeeName, employeePin, masterPin);
-    });
-  }
-
-  async function createEmployee(employee_id, name, pin, masterPin) {
-    try {
-      const payload = { employee_id, name, pin };
-      if (masterPin) {
-        payload.masterPin = masterPin;
-      }
-
-      const data = await apiCall('/api/employees', {
-        method: 'POST',
-        body: JSON.stringify(payload)
-      });
-
-      updateStatus(
-        data.success ? 'Employee created successfully!' : `Error: ${data.error || data.message || 'Unknown error'}`,
-        data.success ? 'success' : 'error'
-      );
-
-      if (data.success) {
-        // Clear input fields on success
-        employeeIdInputNew.value = '';
-        employeeNameInputNew.value = '';
-        employeePinInputNew.value = '';
-        if (masterPinInputNew) masterPinInputNew.value = '';
-      }
-    } catch (error) {
-      updateStatus('Error creating employee: ' + error.message, 'error');
-      console.error('Error creating employee:', error);
-    }
-  }
-
-  // --- Check Admin Status ---
-  async function checkAdminStatus() {
-    try {
-      const data = await apiCall('/api/check-admin');
-      if (data.isAdmin) {
-        document.getElementById('admin-banner').style.display = 'block';
-        const pinInput = document.getElementById('master-pin-input');
-        if (pinInput) pinInput.style.display = 'none';
-      } else {
-        document.getElementById('admin-banner').style.display = 'none';
-        const pinInput = document.getElementById('master-pin-input');
-        if (pinInput) pinInput.style.display = 'block';
-      }
-    } catch (err) {
-      console.error('Failed to get admin status:', err);
-      document.getElementById('admin-banner').style.display = 'none';
     }
   }
 
@@ -222,267 +526,35 @@ document.addEventListener('DOMContentLoaded', function() {
     }, 1500);
   }
 
-  // --- Event Listeners ---
-  if (loginBtn) loginBtn.addEventListener('click', handleLogin);
-  if (logoutBtn) logoutBtn.addEventListener('click', handleLogout);
-  if (createPersonaBtn) createPersonaBtn.addEventListener('click', handleCreatePersona);
-  if (downloadPdfBtn) downloadPdfBtn.addEventListener('click', handleDownloadPdf);
-  if (sendToServerBtn) sendToServerBtn.addEventListener('click', handleSendToServer);
-
-  if (employeePinInput) {
-    employeePinInput.addEventListener('keypress', function (e) {
-      if (e.key === 'Enter') handleLogin();
-    });
+  // --- UI Helper Functions ---
+  function showMainInterface() {
+    authSection.style.display = 'none';
+    mainSection.style.display = 'block';
+    exportSection.style.display = 'none';
+    if (userWelcome && currentEmployee) {
+      userWelcome.textContent = `Logged in as: ${currentEmployee.name} (${currentEmployee.id})`;
+    }
   }
 
-  // --- Scraping and Exporting Button Events ---
-  document.getElementById('scrape').addEventListener('click', () => executeScraping(false));
-  document.getElementById('scrape-gpt').addEventListener('click', () => executeScraping(true));
-  document.getElementById('export-pdf').addEventListener('click', exportToPDF);
-  document.getElementById('export-enhanced-pdf').addEventListener('click', exportEnhancedPDF);
-
-  // --- Listen for Background Script Messages ---
-  chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
-    switch (request.action) {
-      case "scrapingComplete":
-        updateStatus('Profile data scraped successfully!', 'success');
-        window.lastScrapedData = request.data;
-        scrapedData = request.data;
-        break;
-      case "gptProcessingComplete":
-        updateStatus('Persona created successfully!', 'success');
-        window.lastEnhancedData = request.data;
-        enhancedData = request.data;
-        break;
-      case "error":
-        updateStatus('Error: ' + request.message, 'error');
-        break;
-      case "noActiveTab":
-        updateStatus('Error: Please navigate to an Airbnb profile page first.', 'error');
-        break;
-      case "pdfExportComplete":
-        updateStatus('PDF exported successfully!', 'success');
-        break;
-      case "pdfExportFailed":
-        updateStatus('PDF export failed: ' + request.message, 'error');
-        break;
-    }
-    return true;
-  });
-
-  // --- Load Saved Scraped/Enhanced Data ---
-  chrome.storage.local.get(['lastScrapedData', 'lastEnhancedData'], function(data) {
-    if (data.lastScrapedData) window.lastScrapedData = data.lastScrapedData;
-    if (data.lastEnhancedData) window.lastEnhancedData = data.lastEnhancedData;
-  });
-
-  // --------- Main Functionality ---------
-
-  function executeScraping(processWithGPT) {
-    chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
-      if (tabs.length === 0) {
-        updateStatus('Error: No active tab found.', 'error');
-        return;
-      }
-      const currentTab = tabs[0];
-      if (!currentTab.url.includes('airbnb.co.in/users/show/') && !currentTab.url.includes('airbnb.com/users/show/')) {
-        updateStatus('Error: Please navigate to an Airbnb profile page first.', 'error');
-        return;
-      }
-      updateStatus('Scraping profile...', 'loading');
-      chrome.runtime.sendMessage({
-        action: "scrapeProfile",
-        processWithGPT: processWithGPT,
-        tabId: currentTab.id
-      });
-    });
-  }
-
-  function exportToPDF() {
-    if (!window.lastScrapedData) {
-      updateStatus('Error: Please scrape a profile first.', 'error');
-      return;
-    }
-    chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
-      if (tabs.length === 0) {
-        updateStatus('Error: No active tab found.', 'error');
-        return;
-      }
-      const currentTab = tabs[0];
-      updateStatus('Exporting PDF...', 'loading');
-      chrome.tabs.sendMessage(currentTab.id, {
-        action: "exportPDF",
-        data: window.lastScrapedData
-      }, function(response) {
-        if (chrome.runtime.lastError) {
-          updateStatus('Error: ' + chrome.runtime.lastError.message, 'error');
-        } else if (response && response.success) {
-          updateStatus('PDF exported successfully!', 'success');
-        } else {
-          updateStatus('PDF export failed.', 'error');
-        }
-      });
-    });
-  }
-
-  function exportEnhancedPDF() {
-    if (!window.lastEnhancedData) {
-      updateStatus('Error: Please create an enhanced persona with GPT first.', 'error');
-      return;
-    }
-    
-    chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
-      if (tabs.length === 0) {
-        updateStatus('Error: No active tab found.', 'error');
-        return;
-      }
-      
-      const currentTab = tabs[0];
-      updateStatus('Exporting enhanced PDF...', 'loading');
-      
-      chrome.tabs.sendMessage(currentTab.id, {
-        action: "exportEnhancedPDF",
-        data: window.lastEnhancedData
-      }, function(response) {
-        if (chrome.runtime.lastError) {
-          updateStatus('Error: ' + chrome.runtime.lastError.message, 'error');
-        } else if (response && response.success) {
-          updateStatus('Enhanced PDF exported successfully!', 'success');
-        } else {
-          updateStatus('Enhanced PDF export failed.', 'error');
-        }
-      });
-    });
-  }
-
-  async function handleCreatePersona() {
-    if (!isAuthenticated) {
-      updateStatus('Please login first', 'error');
-      return;
-    }
-    updateStatus('Scraping profile data...', 'loading');
+  async function checkAdminStatus() {
     try {
-      const tabs = await chrome.tabs.query({active: true, currentWindow: true});
-      if (!tabs.length) {
-        updateStatus('No active tab found', 'error');
-        return;
-      }
-      const currentTab = tabs[0];
-      if (!currentTab.url.includes('airbnb.co.in/users/show/') && !currentTab.url.includes('airbnb.com/users/show/')) {
-        updateStatus('Please navigate to an Airbnb profile page first.', 'error');
-        return;
-      }
-      const response = await chrome.tabs.sendMessage(currentTab.id, {
-        action: "scrapeProfile"
-      });
-      if (response) {
-        scrapedData = {
-          ...response,
-          employee_id: currentEmployee.id,
-          employee_name: currentEmployee.name,
-          timestamp: new Date().toISOString(),
-          profile_url: currentTab.url
-        };
-        exportSection.style.display = 'block';
-        updateStatus('Profile data ready for export!', 'success');
+      const data = await apiCall('/api/check-admin');
+      if (data.isAdmin) {
+        document.getElementById('admin-banner').style.display = 'block';
+        const pinInput = document.getElementById('master-pin-input');
+        if (pinInput) pinInput.style.display = 'none';
       } else {
-        updateStatus('Failed to scrape profile data', 'error');
-      }
-    } catch (error) {
-      updateStatus('Scraping error: ' + error.message, 'error');
-    }
-  }
-
-  async function handleDownloadPdf() {
-    if (!scrapedData) {
-      updateStatus('No data to export', 'error');
-      return;
-    }
-    try {
-      const tabs = await chrome.tabs.query({active: true, currentWindow: true});
-      if (!tabs.length) return;
-      const response = await chrome.tabs.sendMessage(tabs[0].id, {
-        action: "exportPDF",
-        data: scrapedData
-      });
-      if (response && response.success) {
-        updateStatus('PDF downloaded successfully!', 'success');
-      } else {
-        updateStatus('PDF download failed', 'error');
-      }
-    } catch (error) {
-      updateStatus('Download error: ' + error.message, 'error');
-    }
-  }
-
-  async function handleSendToServer() {
-    if (!scrapedData || !currentToken) {
-      updateStatus('No data to send', 'error');
-      return;
-    }
-    updateStatus('Sending to server...', 'loading');
-    try {
-      const result = await sendToFrappeServer(scrapedData, currentToken);
-      if (result.success) {
-        updateStatus('Data sent to server successfully!', 'success');
-        scrapedData = null;
-        exportSection.style.display = 'none';
-      } else {
-        updateStatus('Server error: ' + (result.message || 'Unknown error'), 'error');
-      }
-    } catch (error) {
-      updateStatus('Network error: ' + error.message, 'error');
-    }
-  }
-
-  // --- Auth/Session Functions ---
-  async function handleLogin() {
-    const employeeId = employeeIdInput.value.trim();
-    const pin = employeePinInput.value.trim();
-
-    if (!employeeId || !pin) {
-      updateStatus('Please enter employee ID and PIN.', 'error');
-      return;
-    }
-    try {
-      updateStatus('Logging in...', 'loading');
-      loginBtn.disabled = true;
-      const result = await authenticateEmployee(employeeId, pin);
-      if (result.success) {
-        currentToken = result.token;
-        currentEmployee = result.employee;
-        frappeServerUrl = result.frappeServerUrl; // Get from server response
-        isAuthenticated = true;
-        chrome.storage.local.set({ 
-          authToken: currentToken, 
-          currentUser: currentEmployee,
-          frappeServerUrl: frappeServerUrl
-        });
-        showMainInterface();
-        updateStatus('Login successful! Welcome, ' + currentEmployee.name, 'success');
-      } else {
-        updateStatus(result.message || 'Login failed', 'error');
+        document.getElementById('admin-banner').style.display = 'none';
+        const pinInput = document.getElementById('master-pin-input');
+        if (pinInput) pinInput.style.display = 'block';
       }
     } catch (err) {
-      updateStatus(err.message || 'Login error', 'error');
-    } finally {
-      loginBtn.disabled = false;
+      console.error('Failed to get admin status:', err);
+      document.getElementById('admin-banner').style.display = 'none';
     }
   }
 
-  function handleLogout() {
-    isAuthenticated = false;
-    currentToken = null;
-    currentEmployee = null;
-    scrapedData = null;
-    chrome.storage.local.remove(['authToken', 'currentUser', 'frappeServerUrl']);
-    authSection.style.display = 'block';
-    mainSection.style.display = 'none';
-    exportSection.style.display = 'none';
-    updateStatus('Logged out', 'info');
-  }
-
-  // --- Backend API Calls ---
+  // --- Backend API Functions ---
   async function authenticateEmployee(employeeId, pin) {
     return await apiCall('/api/authenticate', {
       method: 'POST',
@@ -504,6 +576,29 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   }
 
+  async function processWithBackendGPT(profileData) {
+    try {
+      const response = await fetch(`${CONFIG.BACKEND_URL}/api/process-with-gpt`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${currentToken}`
+        },
+        body: JSON.stringify({ profileData })
+      });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`API error: ${response.status} ${errorText}`);
+      }
+      
+      return await response.json();
+    } catch (error) {
+      console.error('GPT processing error:', error);
+      throw error;
+    }
+  }
+
   async function sendToFrappeServer(data, token) {
     return await apiCall('/frappe/persona_app.api.save_persona', {
       method: 'POST',
@@ -512,15 +607,5 @@ document.addEventListener('DOMContentLoaded', function() {
       },
       body: JSON.stringify({ data, employee_id: data.employee_id })
     });
-  }
-
-  // --- Helpers ---
-  function showMainInterface() {
-    authSection.style.display = 'none';
-    mainSection.style.display = 'block';
-    exportSection.style.display = 'none';
-    if (userWelcome && currentEmployee) {
-      userWelcome.textContent = `Logged in as: ${currentEmployee.name} (${currentEmployee.id})`;
-    }
   }
 });

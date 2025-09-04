@@ -252,27 +252,21 @@ function extractJoinedDate() {
 
 // PDF Export Functions
 function exportToPDF(data) {
-  console.log('Exporting to PDF:', data);
-  
-  // Dynamically load jsPDF
-  const script = document.createElement('script');
-  script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
-  script.onload = function() {
-    createPDF(data, false);
-  };
-  document.head.appendChild(script);
+  console.log('Sending data to background for PDF generation:', data);
+  chrome.runtime.sendMessage({
+    action: "generatePDF",
+    data: data,
+    isEnhanced: false
+  });
 }
 
 function exportEnhancedPDF(data) {
-  console.log('Exporting enhanced PDF:', data);
-  
-  // Dynamically load jsPDF
-  const script = document.createElement('script');
-  script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
-  script.onload = function() {
-    createPDF(data, true);
-  };
-  document.head.appendChild(script);
+  console.log('Sending enhanced data to background for PDF generation:', data);
+  chrome.runtime.sendMessage({
+    action: "generatePDF", 
+    data: data,
+    isEnhanced: true
+  });
 }
 
 function createPDF(data, isEnhanced = false) {
