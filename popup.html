@@ -246,108 +246,118 @@
 <body>
   <div class="container">
     <div class="header">
-      <div class="logo">A</div>
+      <div class="logo" aria-hidden="true">A</div>
       <h1>Airbnb Persona Creator</h1>
       <div class="subtitle">Company Employee Access</div>
     </div>
-    <div id="status-popup" style="
-  position: fixed;
-  bottom: 40px;
-  left: 50%;
-  transform: translateX(-50%);
-  background: rgba(102, 126, 234, 0.9);
-  color: white;
-  padding: 12px 24px;
-  border-radius: 8px;
-  box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
-  font-weight: 600;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.5s ease, transform 0.5s ease;
-  z-index: 9999;
-"></div>
-<div id="admin-banner"
-  style="
-    display: none;
-    position: absolute;
-    top: 10px;
-    left: 10px;
-    font-weight: bold;
-    font-size: 16px;
-    user-select: none;
-    z-index: 9999;
-  ">
-  🦁 Admin
-</div>
+    
+    <!-- Status popup for notifications -->
+    <div id="status-popup" role="alert" aria-live="polite" style="
+      position: fixed;
+      bottom: 40px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(102, 126, 234, 0.9);
+      color: white;
+      padding: 12px 24px;
+      border-radius: 8px;
+      box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+      font-weight: 600;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.5s ease, transform 0.5s ease;
+      z-index: 9999;
+    "></div>
+    
+    <!-- Admin banner -->
+    <div id="admin-banner" aria-hidden="true"
+      style="
+        display: none;
+        position: absolute;
+        top: 10px;
+        left: 10px;
+        font-weight: bold;
+        font-size: 16px;
+        user-select: none;
+        z-index: 9999;
+      ">
+      🦁 Admin
+    </div>
+    
+    <!-- Authentication Section -->
     <div id="auth-section" class="auth-section">
       <div class="section-title">
-        <span class="icon">🔐</span>
+        <span class="icon" aria-hidden="true">🔐</span>
         Employee Login
       </div>
 
       <div class="input-group">
-        <input type="text" id="employee-id" placeholder="Employee ID" />
+        <input type="text" id="employee-id" placeholder="Employee ID" aria-label="Employee ID" />
       </div>
 
       <div class="input-group">
-        <input type="password" id="employee-pin" placeholder="PIN Code" />
+        <input type="password" id="employee-pin" placeholder="PIN Code" aria-label="PIN Code" />
       </div>
 
       <button id="login-btn" class="btn btn-primary">
-        <span class="icon">🚀</span>
+        <span class="icon" aria-hidden="true">🚀</span>
         Login & Start
       </button>
     </div>
 
+    <!-- Main Section (shown after login) -->
     <div id="main-section" style="display: none;">
-      <div id="user-welcome" class="user-welcome"></div>
+      <div id="user-welcome" class="user-welcome" aria-live="polite"></div>
 
       <button id="create-persona" class="btn btn-primary">
-        <span class="icon">✨</span>
+        <span class="icon" aria-hidden="true">✨</span>
         Create Persona
       </button>
 
+      <!-- Employee Creation Form (for admins) -->
       <div id="create-employee-form" style="margin-top: 20px;">
         <div class="section-title">
-          <span class="icon">👥</span>
+          <span class="icon" aria-hidden="true">👥</span>
           Create New Employee
         </div>
 
         <div class="input-group">
-          <input type="text" id="employee-id-input" placeholder="Employee ID" />
+          <input type="text" id="employee-id-input" placeholder="Employee ID" aria-label="New Employee ID" />
         </div>
 
         <div class="input-group">
-          <input type="text" id="employee-name-input" placeholder="Employee Name" />
+          <input type="text" id="employee-name-input" placeholder="Employee Name" aria-label="New Employee Name" />
         </div>
 
         <div class="input-group">
-          <input type="password" id="employee-pin-input" placeholder="Employee PIN" />
+          <input type="password" id="employee-pin-input" placeholder="Employee PIN" aria-label="New Employee PIN" />
         </div>
 
-        <!-- New Master PIN input -->
+        <!-- Master PIN input (for non-admin IPs) -->
         <div class="input-group">
           <input
             type="password"
             id="master-pin-input"
             placeholder="Enter the Admin PIN"
+            aria-label="Admin PIN for verification"
           />
         </div>
 
         <button id="create-employee-btn" class="btn btn-secondary" style="margin-top: 10px;">
-          <span class="icon">➕</span>
+          <span class="icon" aria-hidden="true">➕</span>
           Create Employee
         </button>
       </div>
 
+      <!-- Export Section (shown after data scraping) -->
       <div id="export-section" class="export-section" style="margin-top: 30px;">
         <div class="export-title">Export Options</div>
         <button id="download-pdf" class="btn btn-secondary">
-          <span class="icon">📄</span>
+          <span class="icon" aria-hidden="true">📄</span>
           Download PDF
         </button>
         <button id="send-to-server" class="btn btn-secondary">
-          <span class="icon">🌐</span>
+          <span class="icon" aria-hidden="true">🌐</span>
           Send to Server
         </button>
       </div>
@@ -355,9 +365,10 @@
       <button id="logout-btn" class="logout-btn" style="margin-top: 20px;">Logout</button>
     </div>
 
+    <!-- Status Container -->
     <div class="status-container" style="margin-top: 20px;">
       <div class="status-label">Status:</div>
-      <div id="status">Please login to continue</div>
+      <div id="status" aria-live="polite">Please login to continue</div>
     </div>
   </div>
 
