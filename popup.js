@@ -1,16 +1,15 @@
 document.addEventListener('DOMContentLoaded', function() {
-  // Load saved configuration and session
-  chrome.storage.sync.get(['openaiKey', 'webhookUrl'], function(data) {
-    if (data.openaiKey) document.getElementById('openai-key').value = data.openaiKey;
-    if (data.webhookUrl) document.getElementById('webhook-url').value = data.webhookUrl;
-    checkAdminStatus();  
-  });
+  // Configuration
+  const CONFIG = {
+    BACKEND_URL: 'https://bnb-ai-backend.onrender.com',
+    FRAPPE_SERVER_URL: 'https://your-actual-frappe-server.com' // UPDATE THIS: Replace with your actual Frappe server URL
+  };
 
-  // Cached DOM elements for auth and main UI
+  // Cached DOM elements
   const authSection = document.getElementById('auth-section');
   const mainSection = document.getElementById('main-section');
   const exportSection = document.getElementById('export-section');
-  const userWelcome = document.getElementById('user-welcome');
+  const userWelcome = document.getElementById('user-right');
   const loginBtn = document.getElementById('login-btn');
   const logoutBtn = document.getElementById('logout-btn');
   const createPersonaBtn = document.getElementById('create-persona');
@@ -18,187 +17,217 @@ document.addEventListener('DOMContentLoaded', function() {
   const sendToServerBtn = document.getElementById('send-to-server');
   const employeeIdInput = document.getElementById('employee-id');
   const employeePinInput = document.getElementById('employee-pin');
-
-  // Employee creation elements
   const createEmployeeBtn = document.getElementById('create-employee-btn');
   const employeeIdInputNew = document.getElementById('employee-id-input');
   const employeeNameInputNew = document.getElementById('employee-name-input');
   const employeePinInputNew = document.getElementById('employee-pin-input');
   const masterPinInputNew = document.getElementById('master-pin-input');
-  
-  document.getElementById('admin-banner').style.display = 'block';
-  
+
+  // State variables
   let isAuthenticated = false;
   let currentToken = null;
   let currentEmployee = null;
   let scrapedData = null;
 
-  // Backend URLs
-  const FRAPPE_SERVER_URL = 'https://your-frappe-server.com';
-  const BACKEND_URL = 'https://bnb-ai-backend.onrender.com';
+  // Initialize UI
+  initializeUI();
+
+  // --- API Helper Function ---
+  async function apiCall(endpoint, options = {}) {
+    try {
+      const url = endpoint.startsWith('http') ? endpoint : `${CONFIG.BACKEND_URL}${endpoint}`;
+      
+      const response = await fetch(url, {
+        headers: {
+          'Authorization': currentToken ? `Bearer ${currentToken}` : '',
+          'Content-Type': 'application/json',
+          ...options.headers
+        },
+        ...options
+      });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`HTTP ${response.status}: ${errorText}`);
+      }
+      
+      return await response.json();
+    } catch (error) {
+      console.error('API call failed:', error);
+      throw error;
+    }
+  }
+
+  // --- Initialize UI ---
+  async function initializeUI() {
+    // Show admin banner initially
+    document.getElementById('admin-banner').style.display = 'block';
+    
+    // Load session and check admin status
+    await loadSavedSession();
+    await checkAdminStatus();
+  }
+
+  // --- Load Saved Session ---
+  async function loadSavedSession() {
+    chrome.storage.local.get(['authToken'], async function(result) {
+      if (result.authToken) {
+        updateStatus('Verifying saved session...', 'loading');
+        try {
+          const valid = await verifyToken(result.authToken);
+          if (valid) {
+            // Fetch fresh user data from backend
+            const userData = await apiCall('/api/user-info');
+            currentToken = result.authToken;
+            currentEmployee = userData;
+            isAuthenticated = true;
+            showMainInterface();
+            updateStatus('Welcome back, ' + currentEmployee.name, 'success');
+            return;
+          }
+        } catch (error) {
+          console.error('Session validation failed:', error);
+          // Token invalid, clear storage
+          chrome.storage.local.remove(['authToken', 'currentUser']);
+        }
+      }
+      // Show auth UI if no valid session
+      authSection.style.display = 'block';
+      mainSection.style.display = 'none';
+      exportSection.style.display = 'none';
+    });
+  }
 
   // --- Employee Registration ---
   if (createEmployeeBtn) {
-    createEmployeeBtn.addEventListener('click', () => {
+    createEmployeeBtn.addEventListener('click', async () => {
       const employeeId = employeeIdInputNew.value.trim();
       const employeeName = employeeNameInputNew.value.trim();
       const employeePin = employeePinInputNew.value.trim();
-       const masterPin = masterPinInputNew ? masterPinInputNew.value.trim() : '';
+      const masterPin = masterPinInputNew ? masterPinInputNew.value.trim() : '';
+      
       if (!employeeId || !employeeName || !employeePin) {
         updateStatus('Please fill in all fields', 'error');
         return;
       }
-      createEmployee(employeeId, employeeName, employeePin, masterPin);
+      
+      await createEmployee(employeeId, employeeName, employeePin, masterPin);
     });
   }
-  
+
   async function createEmployee(employee_id, name, pin, masterPin) {
-  try {
-    const payload = { employee_id, name, pin };
-    if (masterPin) {
-      payload.masterPin = masterPin; // Include masterPin only if provided
-    }
-
-    const response = await fetch(`${BACKEND_URL}/api/employees`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-
-    const data = await response.json();
-
-    updateStatus(
-      data.success ? 'Employee created successfully!' : `Error: ${data.error || data.message || 'Unknown error'}`,
-      data.success ? 'success' : 'error'
-    );
-    console.log('Create employee response:', data);
-
-    if (data.success) {
-      // Optional: clear input fields on success
-      employeeIdInputNew.value = '';
-      employeeNameInputNew.value = '';
-      employeePinInputNew.value = '';
-      if (masterPinInputNew) masterPinInputNew.value = '';
-    }
-  } catch (error) {
-    updateStatus('Network error: ' + error.message, 'error');
-    console.error('Error creating employee:', error);
-  }
-
-}
-
-async function checkAdminStatus() {
-  try {
-    const response = await fetch(`${BACKEND_URL}/api/check-admin`);
-    const data = await response.json();
-    if (data.isAdmin) {
-      document.getElementById('admin-banner').style.display = 'block';
-      const pinInput = document.getElementById('master-pin-input');
-      if (pinInput) pinInput.style.display = 'none';
-    } else {
-      document.getElementById('admin-banner').style.display = 'none';
-      const pinInput = document.getElementById('master-pin-input');
-      if (pinInput) pinInput.style.display = 'block';
-    }
-  } catch (err) {
-    console.error('Failed to get admin status:', err);
-  }
-}
-  // --- Status Message Handler ---
-function updateStatus(message, type = 'info') {
-  const statusElement = document.getElementById('status');
-  if (!statusElement) return;
-
-  // Update main status element content and styling
-  statusElement.textContent = message;
-  statusElement.className = '';
-
-  switch (type) {
-    case 'success':
-      statusElement.classList.add('status-success');
-      break;
-    case 'error':
-      statusElement.classList.add('status-error');
-      break;
-    case 'loading':
-      statusElement.classList.add('status-loading');
-      statusElement.innerHTML = '<div class="loader"></div> ' + message;
-      break;
-    default:
-      // For 'info' or any other type, no extra styling
-      break;
-  }
-
-  // Fade-up popup notification code
-  const popup = document.getElementById('status-popup');
-  if (!popup) return;
-
-  let bgColor = 'rgba(102, 126, 234, 0.9)'; // default blue
-  if (type === 'success') bgColor = 'rgba(0, 184, 148, 0.9)';      // green
-  else if (type === 'error') bgColor = 'rgba(214, 48, 49, 0.9)';   // red
-  else if (type === 'loading') bgColor = 'rgba(9, 132, 227, 0.9)'; // blue
-
-  popup.textContent = message;
-  popup.style.backgroundColor = bgColor;
-
-  popup.style.opacity = '1';
-  popup.style.transform = 'translateX(-50%) translateY(0)';
-
-  clearTimeout(popup._timeout);
-  popup._timeout = setTimeout(() => {
-    popup.style.opacity = '0';
-    popup.style.transform = 'translateX(-50%) translateY(20px)';
-  }, 1500);
-}
-  // --- Session Resume & Layout ---
-  chrome.storage.local.get(['authToken', 'currentUser'], async function(result) {
-    if (result.authToken && result.currentUser) {
-      updateStatus('Verifying saved session...', 'loading');
-      const valid = await verifyToken(result.authToken);
-      if (valid) {
-        currentToken = result.authToken;
-        currentEmployee = result.currentUser;
-        isAuthenticated = true;
-        showMainInterface();
-        updateStatus('Welcome back, ' + currentEmployee.name, 'success');
-        return;
-      } else {
-        // Invalid token, clear storage
-        chrome.storage.local.remove(['authToken', 'currentUser']);
+    try {
+      const payload = { employee_id, name, pin };
+      if (masterPin) {
+        payload.masterPin = masterPin;
       }
+
+      const data = await apiCall('/api/employees', {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      });
+
+      updateStatus(
+        data.success ? 'Employee created successfully!' : `Error: ${data.error || data.message || 'Unknown error'}`,
+        data.success ? 'success' : 'error'
+      );
+
+      if (data.success) {
+        // Clear input fields on success
+        employeeIdInputNew.value = '';
+        employeeNameInputNew.value = '';
+        employeePinInputNew.value = '';
+        if (masterPinInputNew) masterPinInputNew.value = '';
+      }
+    } catch (error) {
+      updateStatus('Error creating employee: ' + error.message, 'error');
+      console.error('Error creating employee:', error);
     }
-    // Show auth UI if no valid session
-    authSection.style.display = 'block';
-    mainSection.style.display = 'none';
-    exportSection.style.display = 'none';
-  });
+  }
 
-  // --- Login/Logout Events ---
-  loginBtn.addEventListener('click', handleLogin);
-  logoutBtn.addEventListener('click', handleLogout);
-  employeePinInput.addEventListener('keypress', function(e) {
-    if (e.key === 'Enter') handleLogin();
-  });
+  // --- Check Admin Status ---
+  async function checkAdminStatus() {
+    try {
+      const data = await apiCall('/api/check-admin');
+      if (data.isAdmin) {
+        document.getElementById('admin-banner').style.display = 'block';
+        const pinInput = document.getElementById('master-pin-input');
+        if (pinInput) pinInput.style.display = 'none';
+      } else {
+        document.getElementById('admin-banner').style.display = 'none';
+        const pinInput = document.getElementById('master-pin-input');
+        if (pinInput) pinInput.style.display = 'block';
+      }
+    } catch (err) {
+      console.error('Failed to get admin status:', err);
+      document.getElementById('admin-banner').style.display = 'none';
+    }
+  }
 
-  // --- Save OpenAI/Webhook Configuration ---
-  document.getElementById('save-config').addEventListener('click', function() {
-    const openaiKey = document.getElementById('openai-key').value;
-    const webhookUrl = document.getElementById('webhook-url').value;
-    chrome.storage.sync.set({ openaiKey, webhookUrl }, function() {
-      updateStatus('Configuration saved!', 'success');
+  // --- Status Message Handler ---
+  function updateStatus(message, type = 'info') {
+    const statusElement = document.getElementById('status');
+    if (!statusElement) return;
+
+    // Update main status element
+    statusElement.textContent = message;
+    statusElement.className = '';
+
+    switch (type) {
+      case 'success':
+        statusElement.classList.add('status-success');
+        break;
+      case 'error':
+        statusElement.classList.add('status-error');
+        break;
+      case 'loading':
+        statusElement.classList.add('status-loading');
+        statusElement.innerHTML = '<div class="loader"></div> ' + message;
+        break;
+      default:
+        // For 'info' or any other type
+        break;
+    }
+
+    // Popup notification
+    const popup = document.getElementById('status-popup');
+    if (!popup) return;
+
+    let bgColor = 'rgba(102, 126, 234, 0.9)';
+    if (type === 'success') bgColor = 'rgba(0, 184, 148, 0.9)';
+    else if (type === 'error') bgColor = 'rgba(214, 48, 49, 0.9)';
+    else if (type === 'loading') bgColor = 'rgba(9, 132, 227, 0.9)';
+
+    popup.textContent = message;
+    popup.style.backgroundColor = bgColor;
+    popup.style.opacity = '1';
+    popup.style.transform = 'translateX(-50%) translateY(0)';
+
+    clearTimeout(popup._timeout);
+    popup._timeout = setTimeout(() => {
+      popup.style.opacity = '0';
+      popup.style.transform = 'translateX(-50%) translateY(20px)';
+    }, 1500);
+  }
+
+  // --- Event Listeners ---
+  if (loginBtn) loginBtn.addEventListener('click', handleLogin);
+  if (logoutBtn) logoutBtn.addEventListener('click', handleLogout);
+  if (createPersonaBtn) createPersonaBtn.addEventListener('click', handleCreatePersona);
+  if (downloadPdfBtn) downloadPdfBtn.addEventListener('click', handleDownloadPdf);
+  if (sendToServerBtn) sendToServerBtn.addEventListener('click', handleSendToServer);
+
+  if (employeePinInput) {
+    employeePinInput.addEventListener('keypress', function (e) {
+      if (e.key === 'Enter') handleLogin();
     });
-  });
+  }
 
   // --- Scraping and Exporting Button Events ---
   document.getElementById('scrape').addEventListener('click', () => executeScraping(false));
   document.getElementById('scrape-gpt').addEventListener('click', () => executeScraping(true));
   document.getElementById('export-pdf').addEventListener('click', exportToPDF);
   document.getElementById('export-enhanced-pdf').addEventListener('click', exportEnhancedPDF);
-
-  // --- Custom Persona/Download/Server Button Events ---
-  createPersonaBtn.addEventListener('click', handleCreatePersona);
-  downloadPdfBtn.addEventListener('click', handleDownloadPdf);
-  sendToServerBtn.addEventListener('click', handleSendToServer);
 
   // --- Listen for Background Script Messages ---
   chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
@@ -433,28 +462,20 @@ function updateStatus(message, type = 'info') {
 
   // --- Backend API Calls ---
   async function authenticateEmployee(employeeId, pin) {
-    const response = await fetch(`${BACKEND_URL}/api/authenticate`, {
+    return await apiCall('/api/authenticate', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ employee_id: employeeId, pin }),
+      body: JSON.stringify({ employee_id: employeeId, pin })
     });
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.message || `HTTP ${response.status}: ${response.statusText}`);
-    }
-    return await response.json();
   }
 
   async function verifyToken(token) {
     try {
-      const response = await fetch(`${BACKEND_URL}/api/verify-token`, {
+      const data = await apiCall('/api/verify-token', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
+          'Authorization': `Bearer ${token}`
         }
       });
-      const data = await response.json();
       return data.success === true;
     } catch {
       return false;
@@ -462,37 +483,15 @@ function updateStatus(message, type = 'info') {
   }
 
   async function sendToFrappeServer(data, token) {
-    const response = await fetch(`${FRAPPE_SERVER_URL}/api/method/persona_app.api.save_persona`, {
+    return await apiCall(`${CONFIG.FRAPPE_SERVER_URL}/api/method/persona_app.api.save_persona`, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json'
+        'Authorization': `Bearer ${token}`
       },
-      body: JSON.stringify({ data, employee_id: data.employee_id }),
+      body: JSON.stringify({ data, employee_id: data.employee_id })
     });
-    if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    return await response.json();
-  }
-async function getOpenAIKey() {
-  const token = localStorage.getItem('authToken');  // or wherever you store it
-
-  if (!token) {
-    throw new Error('Not authenticated');
   }
 
-  const response = await fetch(`${BACKEND_URL}/api/openai-key`, {
-    headers: {
-      'Authorization': `Bearer ${token}`
-    }
-  });
-
-  if (!response.ok) {
-    throw new Error('Failed to fetch OpenAI API key');
-  }
-
-  const data = await response.json();
-  return data.openaiKey;
-}
   // --- Helpers ---
   function showMainInterface() {
     authSection.style.display = 'none';
