@@ -1,39 +1,43 @@
 {
   "manifest_version": 3,
-  "name": "AirPersona",
+  "name": "Airbnb Persona Creator",
   "version": "1.0",
-  "description": "Secure employee access for Airbnb persona creation with Frappe backend integration",
+  "description": "Scrapes Airbnb profiles and creates detailed personas with AI enhancement",
   "permissions": [
     "activeTab",
     "scripting",
-    "storage"
+    "storage",
+    "downloads"
   ],
   "host_permissions": [
-    "https://www.airbnb.co.in/users/show/*",
-    "https://your-frappe-server.com/*",
-    "https://bnb-ai-backend.onrender.com*"
+    "https://*.airbnb.com/*",
+    "https://*.airbnb.co.in/*",
+    "https://bnb-ai-backend.onrender.com/*"
   ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
   "content_scripts": [
     {
-      "matches": ["https://www.airbnb.co.in/users/show/*"],
-      "js": ["content.js"],
-      "run_at": "document_idle"
+      "matches": [
+        "https://*.airbnb.com/users/show/*",
+        "https://*.airbnb.co.in/users/show/*"
+      ],
+      "js": ["content.js"]
     }
   ],
   "action": {
     "default_popup": "popup.html",
-    "default_title": "Create Airbnb Persona"
-  },
-  "icons": {
-    "16": "icons/icon16.png",
-    "48": "icons/icon48.png",
-    "128": "icons/icon128.png"
+    "default_title": "Airbnb Persona Creator"
   },
   "web_accessible_resources": [
     {
-      "resources": ["libs/jspdf.umd.min.js"],
-      "matches": ["<all_urls>"]
-   
+      "resources": ["content.js", "popup.html", "popup.js"],
+      "matches": ["https://*.airbnb.com/*", "https://*.airbnb.co.in/*"]
     }
-  ]
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  }
 }

@@ -1,3 +1,7 @@
+// Configuration - Load from environment
+const CONFIG = {
+  BACKEND_URL: 'https://bnb-ai-backend.onrender.com'
+};
 chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
   if (request.action === "scrapeProfile") {
     // Forward the message to the content script in the specified tab
@@ -47,32 +51,26 @@ chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
 
   return true; // Keep message channel open if needed
 });
+
 async function processProfileData(profileData, processWithGPT) {
   try {
     // Save raw data
- 
-
     const rawData = JSON.stringify(profileData, null, 2);
     const profileUrl = profileData.profileUrl || window.location.href;
     const uid = profileUrl.split('/').filter(Boolean).pop();
     const rawFilename = `Abnbscrap_${uid}_raw.json`;
     const url = 'data:application/json;charset=utf-8,' + encodeURIComponent(rawData);
-       console.log('Raw data URL type:', typeof url);
-console.log('Raw data URL value:', url);
+    
     chrome.downloads.download({
       url: url,
       filename: rawFilename,
       saveAs: false
     });
     
-      
-    
-    // Send to webhook
-    await sendToWebhook(profileData, 'raw');
-    
     // Process with GPT if requested
     if (processWithGPT) {
-      const gptProcessed = await processWithGPT(profileData);
+      console.log('Processing with GPT via backend...');
+      const gptProcessed = await processWithBackendGPT(profileData);
       
       if (gptProcessed) {
         const processedFilename = `airbnb_profile_${profileData.name.replace(/\s+/g, '_')}_persona.json`;
@@ -86,94 +84,70 @@ console.log('Raw data URL value:', url);
           saveAs: false
         });
         
-        // Send to webhook
-        await sendToWebhook(gptProcessed, 'processed');
+        // Save to storage for popup access
+        chrome.storage.local.set({ lastEnhancedData: gptProcessed });
         
         // Notify popup
-        chrome.runtime.sendMessage({action: "gptProcessingComplete"});
+        chrome.runtime.sendMessage({
+          action: "gptProcessingComplete", 
+          data: gptProcessed
+        });
       }
     } else {
+      // Save to storage for popup access
+      chrome.storage.local.set({ lastScrapedData: profileData });
+      
       // Notify popup
-      chrome.runtime.sendMessage({action: "scrapingComplete"});
+      chrome.runtime.sendMessage({
+        action: "scrapingComplete",
+        data: profileData
+      });
     }
   } catch (error) {
     console.error('Error processing profile data:', error);
-    chrome.runtime.sendMessage({action: "error", message: error.message});
+    chrome.runtime.sendMessage({
+      action: "error", 
+      message: error.message
+    });
   }
 }
 
-async function processWithGPT(profileData) {
+// Function to process with GPT via your backend
+async function processWithBackendGPT(profileData) {
   try {
-    // Get API key from storage
-    const data = await chrome.storage.sync.get(['openaiKey']);
-    if (!data.openaiKey) {
-      throw new Error('OpenAI API key not configured');
+    // Get auth token from storage
+    const data = await chrome.storage.local.get(['authToken']);
+    if (!data.authToken) {
+      throw new Error('Not authenticated. Please login first.');
     }
-    
-    // Prepare prompt for GPT
-    const prompt = `
-Create a business-oriented, emotionally driven persona based on this Airbnb guest profile data:
 
-${JSON.stringify(profileData, null, 2)}
-
-Please analyze this profile and create a comprehensive persona that includes:
-1. A catchy persona name that reflects their personality
-2. Demographic information (inferred or explicit)
-3. Psychological profile (travel motivations, values, preferences)
-4. Emotional drivers and pain points
-5. Travel behavior patterns
-6. Potential value as a customer
-7. Marketing approach recommendations
-8. Communication style preferences
-
-Format the response as a JSON object with these fields. Be insightful and business-focused.
-`;
-    
-    // Call GPT API
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    // Call your backend API for GPT processing
+    const response = await fetch(`${CONFIG.BACKEND_URL}/api/process-with-gpt`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${data.openaiKey}`
+        'Authorization': `Bearer ${data.authToken}`
       },
       body: JSON.stringify({
-        model: 'gpt-3.5-turbo',
-        messages: [
-          {
-            role: 'system',
-            content: 'You are a marketing analyst specializing in creating customer personas from data. Provide detailed, business-focused insights in JSON format.'
-          },
-          {
-            role: 'user',
-            content: prompt
-          }
-        ],
-        temperature: 0.7,
-        max_tokens: 2000
+        profileData: profileData
       })
     });
     
     if (!response.ok) {
-      throw new Error(`GPT API error: ${response.status} ${response.statusText}`);
+      const errorText = await response.text();
+      throw new Error(`Backend API error: ${response.status} ${errorText}`);
     }
     
     const result = await response.json();
-    const gptResponse = result.choices[0].message.content;
     
-    // Parse the JSON response from GPT
-    try {
-      return JSON.parse(gptResponse);
-    } catch (e) {
-      // If GPT didn't return valid JSON, try to extract JSON from the response
-      const jsonMatch = gptResponse.match(/```json\n([\s\S]*?)\n```/) || gptResponse.match(/{[\s\S]*}/);
-      if (jsonMatch && jsonMatch[0]) {
-        return JSON.parse(jsonMatch[0]);
-      } else {
-        throw new Error('GPT did not return valid JSON');
-      }
+    if (!result.success) {
+      throw new Error(result.message || 'GPT processing failed on backend');
     }
+    
+    return result.processedData;
+    
   } catch (error) {
-    console.error('Error processing with GPT:', error);
+    console.error('Error processing with backend GPT:', error);
     throw error;
   }
 }

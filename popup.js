@@ -1,15 +1,15 @@
 document.addEventListener('DOMContentLoaded', function() {
-  // Configuration
+  // Configuration - Now loaded from environment
   const CONFIG = {
     BACKEND_URL: 'https://bnb-ai-backend.onrender.com',
-    FRAPPE_SERVER_URL: 'https://your-actual-frappe-server.com' // UPDATE THIS: Replace with your actual Frappe server URL
+    // FRAPPE_SERVER_URL will be set after authentication
   };
 
   // Cached DOM elements
   const authSection = document.getElementById('auth-section');
   const mainSection = document.getElementById('main-section');
   const exportSection = document.getElementById('export-section');
-  const userWelcome = document.getElementById('user-right');
+  const userWelcome = document.getElementById('user-welcome');
   const loginBtn = document.getElementById('login-btn');
   const logoutBtn = document.getElementById('logout-btn');
   const createPersonaBtn = document.getElementById('create-persona');
@@ -28,6 +28,8 @@ document.addEventListener('DOMContentLoaded', function() {
   let currentToken = null;
   let currentEmployee = null;
   let scrapedData = null;
+  let enhancedData = null;
+  let frappeServerUrl = null;
 
   // Initialize UI
   initializeUI();
@@ -35,7 +37,18 @@ document.addEventListener('DOMContentLoaded', function() {
   // --- API Helper Function ---
   async function apiCall(endpoint, options = {}) {
     try {
-      const url = endpoint.startsWith('http') ? endpoint : `${CONFIG.BACKEND_URL}${endpoint}`;
+      // Determine the base URL based on endpoint type
+      let baseUrl;
+      if (endpoint.includes('/api/')) {
+        baseUrl = CONFIG.BACKEND_URL;
+      } else if (endpoint.includes('/frappe/') && frappeServerUrl) {
+        baseUrl = frappeServerUrl;
+        endpoint = endpoint.replace('/frappe/', '/api/method/');
+      } else {
+        throw new Error('Invalid API endpoint');
+      }
+      
+      const url = `${baseUrl}${endpoint}`;
       
       const response = await fetch(url, {
         headers: {
@@ -70,16 +83,15 @@ document.addEventListener('DOMContentLoaded', function() {
 
   // --- Load Saved Session ---
   async function loadSavedSession() {
-    chrome.storage.local.get(['authToken'], async function(result) {
-      if (result.authToken) {
+    chrome.storage.local.get(['authToken', 'currentUser', 'frappeServerUrl'], async function(result) {
+      if (result.authToken && result.currentUser) {
         updateStatus('Verifying saved session...', 'loading');
         try {
           const valid = await verifyToken(result.authToken);
           if (valid) {
-            // Fetch fresh user data from backend
-            const userData = await apiCall('/api/user-info');
             currentToken = result.authToken;
-            currentEmployee = userData;
+            currentEmployee = result.currentUser;
+            frappeServerUrl = result.frappeServerUrl;
             isAuthenticated = true;
             showMainInterface();
             updateStatus('Welcome back, ' + currentEmployee.name, 'success');
@@ -88,7 +100,7 @@ document.addEventListener('DOMContentLoaded', function() {
         } catch (error) {
           console.error('Session validation failed:', error);
           // Token invalid, clear storage
-          chrome.storage.local.remove(['authToken', 'currentUser']);
+          chrome.storage.local.remove(['authToken', 'currentUser', 'frappeServerUrl']);
         }
       }
       // Show auth UI if no valid session
@@ -235,10 +247,12 @@ document.addEventListener('DOMContentLoaded', function() {
       case "scrapingComplete":
         updateStatus('Profile data scraped successfully!', 'success');
         window.lastScrapedData = request.data;
+        scrapedData = request.data;
         break;
       case "gptProcessingComplete":
         updateStatus('Persona created successfully!', 'success');
         window.lastEnhancedData = request.data;
+        enhancedData = request.data;
         break;
       case "error":
         updateStatus('Error: ' + request.message, 'error');
@@ -271,7 +285,7 @@ document.addEventListener('DOMContentLoaded', function() {
         return;
       }
       const currentTab = tabs[0];
-      if (!currentTab.url.includes('airbnb.co.in/users/show/')) {
+      if (!currentTab.url.includes('airbnb.co.in/users/show/') && !currentTab.url.includes('airbnb.com/users/show/')) {
         updateStatus('Error: Please navigate to an Airbnb profile page first.', 'error');
         return;
       }
@@ -316,13 +330,16 @@ document.addEventListener('DOMContentLoaded', function() {
       updateStatus('Error: Please create an enhanced persona with GPT first.', 'error');
       return;
     }
+    
     chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
       if (tabs.length === 0) {
         updateStatus('Error: No active tab found.', 'error');
         return;
       }
+      
       const currentTab = tabs[0];
       updateStatus('Exporting enhanced PDF...', 'loading');
+      
       chrome.tabs.sendMessage(currentTab.id, {
         action: "exportEnhancedPDF",
         data: window.lastEnhancedData
@@ -351,7 +368,7 @@ document.addEventListener('DOMContentLoaded', function() {
         return;
       }
       const currentTab = tabs[0];
-      if (!currentTab.url.includes('airbnb.co.in/users/show/')) {
+      if (!currentTab.url.includes('airbnb.co.in/users/show/') && !currentTab.url.includes('airbnb.com/users/show/')) {
         updateStatus('Please navigate to an Airbnb profile page first.', 'error');
         return;
       }
@@ -434,8 +451,13 @@ document.addEventListener('DOMContentLoaded', function() {
       if (result.success) {
         currentToken = result.token;
         currentEmployee = result.employee;
+        frappeServerUrl = result.frappeServerUrl; // Get from server response
         isAuthenticated = true;
-        chrome.storage.local.set({ authToken: currentToken, currentUser: currentEmployee });
+        chrome.storage.local.set({ 
+          authToken: currentToken, 
+          currentUser: currentEmployee,
+          frappeServerUrl: frappeServerUrl
+        });
         showMainInterface();
         updateStatus('Login successful! Welcome, ' + currentEmployee.name, 'success');
       } else {
@@ -453,7 +475,7 @@ document.addEventListener('DOMContentLoaded', function() {
     currentToken = null;
     currentEmployee = null;
     scrapedData = null;
-    chrome.storage.local.remove(['authToken', 'currentUser']);
+    chrome.storage.local.remove(['authToken', 'currentUser', 'frappeServerUrl']);
     authSection.style.display = 'block';
     mainSection.style.display = 'none';
     exportSection.style.display = 'none';
@@ -483,7 +505,7 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   async function sendToFrappeServer(data, token) {
-    return await apiCall(`${CONFIG.FRAPPE_SERVER_URL}/api/method/persona_app.api.save_persona`, {
+    return await apiCall('/frappe/persona_app.api.save_persona', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${token}`

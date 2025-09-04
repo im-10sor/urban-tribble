@@ -19,15 +19,19 @@ Format the response as a JSON object with these fields. Be insightful and busine
 }
 
 function parseGPTResponse(response) {
-  try {
-    return JSON.parse(response);
-  } catch (e) {
-    // If GPT didn't return valid JSON, try to extract JSON from the response
-    const jsonMatch = response.match(/```json\n([\s\S]*?)\n```/) || response.match(/{[\s\S]*}/);
-    if (jsonMatch) {
-      return JSON.parse(jsonMatch[0]);
-    } else {
-      throw new Error('GPT did not return valid JSON');
+    try {
+        // Try to find a JSON block first
+        const jsonMatch = response.match(/{[\s\S]*}/);
+        if (jsonMatch) {
+            return JSON.parse(jsonMatch[0]);
+        }
+    } catch (e) {
+        console.error("Failed to parse extracted JSON", e);
     }
-  }
+    // If that fails, try parsing the whole thing (in case it's a raw JSON response)
+    try {
+        return JSON.parse(response);
+    } catch (e) {
+         throw new Error('GPT did not return valid JSON');
+    }
 }
