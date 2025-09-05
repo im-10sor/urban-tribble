@@ -287,7 +287,7 @@ document.addEventListener('DOMContentLoaded', function() {
       return;
     }
     
-    updateStatus('Scraping profile data...', 'loading');
+    updateStatus('Checking current page...', 'loading');
     
     try {
       const tabs = await chrome.tabs.query({active: true, currentWindow: true});
@@ -297,60 +297,114 @@ document.addEventListener('DOMContentLoaded', function() {
       }
       
       const currentTab = tabs[0];
-      if (!currentTab.url.includes('airbnb.co.in/users/show/') && !currentTab.url.includes('airbnb.com/users/show/')) {
+      if (!currentTab.url.includes('airbnb.co.in/users/show/') && 
+          !currentTab.url.includes('airbnb.com/users/show/')) {
         updateStatus('Please navigate to an Airbnb profile page first.', 'error');
         return;
       }
       
-      // First, scrape the profile directly from content script
-      const scrapedData = await new Promise((resolve, reject) => {
+      updateStatus('Scraping profile data...', 'loading');
+      
+      // First, try to scrape the profile directly from content script
+      const scrapedResponse = await new Promise((resolve, reject) => {
         chrome.tabs.sendMessage(currentTab.id, {
           action: "scrapeProfile"
         }, function(response) {
           if (chrome.runtime.lastError) {
             reject(new Error(chrome.runtime.lastError.message));
-          } else if (response) {
-            resolve(response);
+          } else if (response && response.success) {
+            resolve(response.data);
+          } else if (response && response.error) {
+            reject(new Error(response.error));
           } else {
             reject(new Error('Failed to scrape profile'));
           }
         });
       });
       
-      if (scrapedData) {
-        // Now process with GPT
-        updateStatus('Processing with AI...', 'loading');
-        const gptResult = await processWithBackendGPT(scrapedData);
+      // If scraping failed, try to inject content script and retry
+      if (!scrapedResponse) {
+        updateStatus('Injecting scraper...', 'loading');
         
-        if (gptResult && gptResult.success) {
-          enhancedData = gptResult.processedData;
-          exportSection.style.display = 'block';
-          updateStatus('AI Persona created successfully!', 'success');
-          
-          // Save for download
-          const completeData = {
-            ...scrapedData,
-            persona: enhancedData,
-            employee_id: currentEmployee.id,
-            employee_name: currentEmployee.name,
-            timestamp: new Date().toISOString(),
-            profile_url: currentTab.url
-          };
-          
-          // Save to storage and global variables
-          scrapedData = completeData;
-          window.lastScrapedData = completeData;
-          window.lastEnhancedData = enhancedData;
-          
-          chrome.storage.local.set({ 
-            lastEnhancedData: enhancedData,
-            lastScrapedData: completeData 
+        // Inject the content script
+        await chrome.scripting.executeScript({
+          target: { tabId: currentTab.id },
+          files: ['content.js']
+        });
+        
+        // Wait a moment for the script to load
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        // Try scraping again
+        updateStatus('Scraping profile data...', 'loading');
+        const retryResponse = await new Promise((resolve, reject) => {
+          chrome.tabs.sendMessage(currentTab.id, {
+            action: "scrapeProfile"
+          }, function(response) {
+            if (chrome.runtime.lastError) {
+              reject(new Error(chrome.runtime.lastError.message));
+            } else if (response && response.success) {
+              resolve(response.data);
+            } else if (response && response.error) {
+              reject(new Error(response.error));
+            } else {
+              reject(new Error('Failed to scrape profile after injection'));
+            }
           });
+        });
+        
+        if (!retryResponse) {
+          throw new Error('Scraping failed after retry');
         }
+        
+        // Use the retry response
+        await processScrapedData(retryResponse, currentTab);
+      } else {
+        // Use the initial response
+        await processScrapedData(scrapedResponse, currentTab);
       }
     } catch (error) {
-      updateStatus('Error: ' + error.message, 'error');
       console.error('Create persona error:', error);
+      updateStatus('Error: ' + error.message, 'error');
+    }
+  }
+
+  // Helper function to process scraped data - FIXED SIGNATURE
+  async function processScrapedData(scrapedData, currentTab) {
+    if (scrapedData) {
+      // Now process with GPT
+      updateStatus('Processing with AI...', 'loading');
+      const gptResult = await processWithBackendGPT(scrapedData);
+      
+      if (gptResult && gptResult.success) {
+        enhancedData = gptResult.processedData;
+        exportSection.style.display = 'block';
+        updateStatus('AI Persona created successfully!', 'success');
+        
+        // Save for download
+        const completeData = {
+          ...scrapedData,
+          persona: enhancedData,
+          employee_id: currentEmployee.id,
+          employee_name: currentEmployee.name,
+          timestamp: new Date().toISOString(),
+          profile_url: currentTab.url
+        };
+        
+        // Save to storage and global variables
+        window.scrapedData = completeData;
+        window.lastScrapedData = completeData;
+        window.lastEnhancedData = enhancedData;
+        
+        chrome.storage.local.set({ 
+          lastEnhancedData: enhancedData,
+          lastScrapedData: completeData 
+        });
+      } else {
+        updateStatus('AI processing failed: ' + (gptResult?.message || 'Unknown error'), 'error');
+      }
+    } else {
+      updateStatus('Failed to scrape profile data', 'error');
     }
   }
 
@@ -404,7 +458,7 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   async function handleSendToServer() {
-    if (!scrapedData || !currentToken) {
+    if (!window.scrapedData || !currentToken) {
       updateStatus('No data to send', 'error');
       return;
     }
@@ -412,10 +466,10 @@ document.addEventListener('DOMContentLoaded', function() {
     updateStatus('Sending to server...', 'loading');
     
     try {
-      const result = await sendToFrappeServer(scrapedData, currentToken);
+      const result = await sendToFrappeServer(window.scrapedData, currentToken);
       if (result.success) {
         updateStatus('Data sent to server successfully!', 'success');
-        scrapedData = null;
+        window.scrapedData = null;
         exportSection.style.display = 'none';
       } else {
         updateStatus('Server error: ' + (result.message || 'Unknown error'), 'error');
@@ -429,7 +483,7 @@ document.addEventListener('DOMContentLoaded', function() {
   function handleScrapingComplete(data) {
     updateStatus('Profile data scraped successfully!', 'success');
     window.lastScrapedData = data;
-    scrapedData = data;
+    window.scrapedData = data;
     chrome.storage.local.set({ lastScrapedData: data });
   }
 

@@ -42,13 +42,9 @@
       "js": ["content.js"]
     }
   ],
-  "action": {
-    "default_popup": "popup.html",
-    "default_title": "Airbnb Persona Creator"
-  },
   "web_accessible_resources": [
     {
-      "resources": ["content.js", "popup.html", "popup.js"],
+      "resources": ["content.js", "popup.html", "popup.js","pdf-generator.html"],
       "matches": ["https://*.airbnb.com/*", "https://*.airbnb.co.in/*"]
     }
   ],

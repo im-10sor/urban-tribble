@@ -45,21 +45,42 @@ const CONFIG = {
 chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
   console.log('Content script received message:', request.action);
   
+  // Handle different types of messages
   switch (request.action) {
     case "scrapeProfile":
       console.log('Scraping profile...');
-      const profileData = scrapeProfileData();
-      sendResponse(profileData);
-      return true;
+      try {
+        const profileData = scrapeProfileData();
+        console.log('Profile data scraped successfully');
+        sendResponse({
+          success: true,
+          data: profileData
+        });
+      } catch (error) {
+        console.error('Scraping error:', error);
+        sendResponse({
+          success: false,
+          error: error.message,
+          details: 'Failed to scrape profile data'
+        });
+      }
+      return true; // Keep message channel open for async response
       
     case "exportPDF":
       console.log('Exporting PDF...');
       try {
         exportToPDF(request.data);
-        sendResponse({ success: true });
+        sendResponse({ 
+          success: true,
+          message: 'PDF export initiated'
+        });
       } catch (error) {
         console.error('PDF export error:', error);
-        sendResponse({ success: false, error: error.message });
+        sendResponse({ 
+          success: false, 
+          error: error.message,
+          details: 'PDF export failed'
+        });
       }
       return true;
       
@@ -67,16 +88,51 @@ chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
       console.log('Exporting enhanced PDF...');
       try {
         exportEnhancedPDF(request.data);
-        sendResponse({ success: true });
+        sendResponse({ 
+          success: true,
+          message: 'Enhanced PDF export initiated'
+        });
       } catch (error) {
         console.error('Enhanced PDF export error:', error);
-        sendResponse({ success: false, error: error.message });
+        sendResponse({ 
+          success: false, 
+          error: error.message,
+          details: 'Enhanced PDF export failed'
+        });
       }
+      return true;
+      
+    case "ping":
+      // Response to check if content script is active
+      console.log('Ping received - content script is active');
+      sendResponse({ 
+        status: "active", 
+        url: window.location.href,
+        ready: true
+      });
+      return true;
+      
+    case "debugInfo":
+      // Provide debugging information
+      console.log('Debug info requested');
+      sendResponse({
+        success: true,
+        url: window.location.href,
+        pageTitle: document.title,
+        isAirbnbProfile: isAirbnbProfilePage(),
+        selectors: testSelectors(),
+        timestamp: new Date().toISOString()
+      });
       return true;
       
     default:
       console.log('Unknown action:', request.action);
-      sendResponse({ success: false, error: 'Unknown action' });
+      sendResponse({ 
+        success: false, 
+        error: 'Unknown action',
+        receivedAction: request.action
+      });
+      return false;
   }
 });
 
@@ -269,157 +325,6 @@ function exportEnhancedPDF(data) {
   });
 }
 
-function createPDF(data, isEnhanced = false) {
-  try {
-    const { jsPDF } = window.jspdf;
-    const doc = new jsPDF();
-    
-    // Set document properties
-    doc.setProperties({
-      title: `Airbnb ${isEnhanced ? 'Enhanced Persona' : 'Profile'} - ${data.name}`,
-      subject: 'Airbnb Guest Profile Analysis',
-      author: 'Airbnb Persona Creator',
-      keywords: 'airbnb, profile, persona, guest, analysis'
-    });
-    
-    // Add header with Airbnb branding
-    doc.setFillColor(...CONFIG.pdf.colors.airbnbRed);
-    doc.rect(0, 0, doc.internal.pageSize.getWidth(), CONFIG.pdf.headerHeight, 'F');
-    
-    doc.setFontSize(CONFIG.pdf.fontSize.title);
-    doc.setTextColor(...CONFIG.pdf.colors.white);
-    doc.text('Airbnb Guest Profile', CONFIG.pdf.margin, 30);
-    
-    doc.setFontSize(CONFIG.pdf.fontSize.body);
-    doc.text(isEnhanced ? 'Enhanced Persona Analysis' : 'Profile Summary', CONFIG.pdf.margin, 40);
-    
-    // Reset text color for content
-    doc.setTextColor(...CONFIG.pdf.colors.black);
-    
-    let yPosition = CONFIG.pdf.headerHeight + CONFIG.pdf.margin;
-    
-    // Basic Information Section
-    yPosition = addSection(doc, 'Basic Information', yPosition);
-    yPosition = addText(doc, `Name: ${data.name}`, yPosition);
-    yPosition = addText(doc, `Location: ${data.location}`, yPosition);
-    yPosition = addText(doc, `Joined: ${data.joinedDate}`, yPosition);
-    yPosition = addText(doc, `Profile URL: ${data.profileUrl}`, yPosition);
-    
-    // Stats Section
-    if (data.stats && Object.keys(data.stats).length > 0) {
-      yPosition = addSection(doc, 'Profile Statistics', yPosition);
-      for (const [key, value] of Object.entries(data.stats)) {
-        yPosition = addText(doc, `${formatKey(key)}: ${value}`, yPosition);
-      }
-    }
-    
-    // Verifications Section
-    if (data.verifications && data.verifications.length > 0) {
-      yPosition = addSection(doc, 'Verifications', yPosition);
-      data.verifications.forEach(verification => {
-        yPosition = addText(doc, `✓ ${verification}`, yPosition);
-      });
-    }
-    
-    // Languages Section
-    if (data.languages && data.languages.length > 0) {
-      yPosition = addSection(doc, 'Languages', yPosition);
-      data.languages.forEach(language => {
-        yPosition = addText(doc, `• ${language}`, yPosition);
-      });
-    }
-    
-    // About Section
-    if (data.about && data.about !== 'About section not found') {
-      yPosition = addSection(doc, 'About', yPosition);
-      const aboutLines = doc.splitTextToSize(data.about, doc.internal.pageSize.getWidth() - (CONFIG.pdf.margin * 2));
-      aboutLines.forEach(line => {
-        if (yPosition > CONFIG.pdf.maxY) {
-          doc.addPage();
-          yPosition = CONFIG.pdf.margin;
-        }
-        doc.text(line, CONFIG.pdf.margin, yPosition);
-        yPosition += 7;
-      });
-    }
-    
-    // Reviews Section
-    if (data.reviews && data.reviews.length > 0) {
-      yPosition = addSection(doc, 'Recent Reviews', yPosition);
-      data.reviews.slice(0, 3).forEach((review, index) => {
-        yPosition = addText(doc, `Review ${index + 1}:`, yPosition);
-        yPosition = addText(doc, `Rating: ${review.rating}`, yPosition, 5);
-        yPosition = addText(doc, `Date: ${review.date}`, yPosition, 5);
-        
-        const reviewLines = doc.splitTextToSize(review.text, doc.internal.pageSize.getWidth() - (CONFIG.pdf.margin * 2));
-        reviewLines.forEach(line => {
-          if (yPosition > CONFIG.pdf.maxY) {
-            doc.addPage();
-            yPosition = CONFIG.pdf.margin;
-          }
-          doc.text(line, CONFIG.pdf.margin + 5, yPosition);
-          yPosition += 5;
-        });
-        yPosition += 5;
-      });
-    }
-    
-    // Enhanced Persona Section (if applicable)
-    if (isEnhanced && data.persona) {
-      yPosition = addSection(doc, 'AI Persona Analysis', yPosition);
-      
-      if (data.persona.travelPreferences) {
-        yPosition = addSubsection(doc, 'Travel Preferences', yPosition);
-        for (const [key, value] of Object.entries(data.persona.travelPreferences)) {
-          yPosition = addText(doc, `${formatKey(key)}: ${value}`, yPosition, 5);
-        }
-      }
-      
-      if (data.persona.communicationStyle) {
-        yPosition = addSubsection(doc, 'Communication Style', yPosition);
-        for (const [key, value] of Object.entries(data.persona.communicationStyle)) {
-          yPosition = addText(doc, `${formatKey(key)}: ${value}`, yPosition, 5);
-        }
-      }
-      
-      if (data.persona.hostingRecommendations) {
-        yPosition = addSubsection(doc, 'Hosting Recommendations', yPosition);
-        const recLines = doc.splitTextToSize(data.persona.hostingRecommendations, doc.internal.pageSize.getWidth() - (CONFIG.pdf.margin * 2));
-        recLines.forEach(line => {
-          if (yPosition > CONFIG.pdf.maxY) {
-            doc.addPage();
-            yPosition = CONFIG.pdf.margin;
-          }
-          doc.text(line, CONFIG.pdf.margin, yPosition);
-          yPosition += 5;
-        });
-      }
-    }
-    
-    // Footer with timestamp
-    doc.setFontSize(CONFIG.pdf.fontSize.small);
-    doc.setTextColor(...CONFIG.pdf.colors.gray);
-    doc.text(`Generated on: ${new Date().toLocaleString()}`, CONFIG.pdf.margin, doc.internal.pageSize.getHeight() - 10);
-    
-    // Save the PDF
-    const filename = `Airbnb_${isEnhanced ? 'Persona' : 'Profile'}_${data.name.replace(/\s+/g, '_')}.pdf`;
-    doc.save(filename);
-    
-    // Notify background script of success
-    chrome.runtime.sendMessage({
-      action: "pdfExportComplete",
-      filename: filename
-    });
-    
-  } catch (error) {
-    console.error('Error creating PDF:', error);
-    chrome.runtime.sendMessage({
-      action: "pdfExportFailed",
-      message: error.message
-    });
-  }
-}
-
 // Helper functions for PDF creation
 function addSection(doc, title, yPosition) {
   if (yPosition > CONFIG.pdf.maxY) {
@@ -467,4 +372,24 @@ function formatKey(key) {
     .replace(/([A-Z])/g, ' $1')
     .replace(/^./, str => str.toUpperCase())
     .replace(/([a-z])([A-Z])/g, '$1 $2');
+}
+
+// Additional helper functions
+function isAirbnbProfilePage() {
+  return window.location.href.includes('airbnb.co.in/users/show/') || 
+         window.location.href.includes('airbnb.com/users/show/');
+}
+
+function testSelectors() {
+  const results = {};
+  for (const [key, selector] of Object.entries(CONFIG.selectors)) {
+    if (typeof selector === 'string') {
+      results[key] = {
+        selector: selector,
+        found: document.querySelector(selector) !== null,
+        count: document.querySelectorAll(selector).length
+      };
+    }
+  }
+  return results;
 }
