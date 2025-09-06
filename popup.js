@@ -1,8 +1,14 @@
+let generatePDFWithOpenAI;
+
+// Load the styles script
+const styleScript = document.createElement('script');
+styleScript.src = chrome.runtime.getURL('popup-styles.js');
+document.head.appendChild(styleScript);
+
 document.addEventListener('DOMContentLoaded', function() {
   // ========== CONFIGURATION ==========
   const CONFIG = {
     BACKEND_URL: 'https://bnb-ai-backend.onrender.com',
-    // FRAPPE_SERVER_URL will be set after authentication
   };
 
   // ========== DOM ELEMENTS ==========
@@ -31,7 +37,9 @@ document.addEventListener('DOMContentLoaded', function() {
   const scrapeGptBtn = document.getElementById('scrape-gpt');
   const exportPdfBtn = document.getElementById('export-pdf');
   const exportEnhancedPdfBtn = document.getElementById('export-enhanced-pdf');
-
+  const downloadEnhancedPdfBtn = document.getElementById('download-enhanced-pdf');
+  const downloadAiPdfBtn = document.getElementById('download-ai-pdf');
+  
   // ========== STATE VARIABLES ==========
   let isAuthenticated = false;
   let currentToken = null;
@@ -39,6 +47,9 @@ document.addEventListener('DOMContentLoaded', function() {
   let scrapedData = null;
   let enhancedData = null;
   let frappeServerUrl = null;
+
+  window.lastScrapedData = null;
+  window.lastEnhancedData = null;
 
   // ========== INITIALIZATION ==========
   initializeUI();
@@ -56,6 +67,8 @@ document.addEventListener('DOMContentLoaded', function() {
   // Scraping and export
   if (createPersonaBtn) createPersonaBtn.addEventListener('click', handleCreatePersona);
   if (downloadPdfBtn) downloadPdfBtn.addEventListener('click', handleDownloadPdf);
+  if (downloadEnhancedPdfBtn) downloadEnhancedPdfBtn.addEventListener('click', handleDownloadEnhancedPdf);
+  if (downloadAiPdfBtn) downloadAiPdfBtn.addEventListener('click', handleDownloadAiPdf);
   if (sendToServerBtn) sendToServerBtn.addEventListener('click', handleSendToServer);
   
   // Additional scraping buttons
@@ -63,7 +76,7 @@ document.addEventListener('DOMContentLoaded', function() {
   if (scrapeGptBtn) scrapeGptBtn.addEventListener('click', () => executeScraping(true));
   if (exportPdfBtn) exportPdfBtn.addEventListener('click', handleDownloadPdf);
   if (exportEnhancedPdfBtn) exportEnhancedPdfBtn.addEventListener('click', handleDownloadEnhancedPdf);
-
+  
   // Enter key support for login
   if (employeePinInput) {
     employeePinInput.addEventListener('keypress', function(e) {
@@ -92,6 +105,9 @@ document.addEventListener('DOMContentLoaded', function() {
       case "pdfExportFailed":
         updateStatus('PDF export failed: ' + request.message, 'error');
         break;
+      case "statusUpdate":
+        updateStatus(request.message, request.type);
+        break;
     }
     return true;
   });
@@ -101,7 +117,8 @@ document.addEventListener('DOMContentLoaded', function() {
   // --- Initialization ---
   async function initializeUI() {
     // Show admin banner initially
-    document.getElementById('admin-banner').style.display = 'block';
+    const adminBanner = document.getElementById('admin-banner');
+    if (adminBanner) adminBanner.style.display = 'block';
     
     // Load session and check admin status
     await loadSavedSession();
@@ -258,10 +275,10 @@ document.addEventListener('DOMContentLoaded', function() {
       }, function(response) {
         if (chrome.runtime.lastError) {
           updateStatus('Error: ' + chrome.runtime.lastError.message, 'error');
-        } else if (response) {
+        } else if (response && response.success) {
           // Save the scraped data
-          window.lastScrapedData = response;
-          chrome.storage.local.set({ lastScrapedData: response });
+          window.lastScrapedData = response.data;
+          chrome.storage.local.set({ lastScrapedData: response.data });
           
           if (processWithGPT) {
             // Process with GPT via background
@@ -358,10 +375,10 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         
         // Use the retry response
-        await processScrapedData(retryResponse, currentTab);
+        await processScrapedData(retryResponse);
       } else {
         // Use the initial response
-        await processScrapedData(scrapedResponse, currentTab);
+        await processScrapedData(scrapedResponse);
       }
     } catch (error) {
       console.error('Create persona error:', error);
@@ -369,8 +386,8 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   }
 
-  // Helper function to process scraped data - FIXED SIGNATURE
-  async function processScrapedData(scrapedData, currentTab) {
+  // Helper function to process scraped data
+  async function processScrapedData(scrapedData) {
     if (scrapedData) {
       // Now process with GPT
       updateStatus('Processing with AI...', 'loading');
@@ -388,7 +405,7 @@ document.addEventListener('DOMContentLoaded', function() {
           employee_id: currentEmployee.id,
           employee_name: currentEmployee.name,
           timestamp: new Date().toISOString(),
-          profile_url: currentTab.url
+          profile_url: window.location.href
         };
         
         // Save to storage and global variables
@@ -419,11 +436,19 @@ document.addEventListener('DOMContentLoaded', function() {
       updateStatus('Generating PDF...', 'loading');
       
       // Send to background script for PDF generation
-      chrome.runtime.sendMessage({
-        action: "generatePDF",
-        data: window.lastScrapedData,
-        isEnhanced: false
+      const response = await new Promise((resolve) => {
+        chrome.runtime.sendMessage({
+          action: "generatePDF",
+          data: window.lastScrapedData,
+          isEnhanced: false
+        }, resolve);
       });
+      
+      if (response && response.success) {
+        updateStatus('PDF generation started successfully!', 'success');
+      } else {
+        updateStatus('PDF generation failed: ' + (response?.error || 'Unknown error'), 'error');
+      }
       
     } catch (error) {
       updateStatus('Download error: ' + error.message, 'error');
@@ -431,29 +456,70 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   async function handleDownloadEnhancedPdf() {
-    if (!window.lastEnhancedData) {
-      updateStatus('Error: Please create an enhanced persona first.', 'error');
+    if (!window.lastScrapedData || !window.lastEnhancedData) {
+      updateStatus('Error: Please create an AI-enhanced persona first.', 'error');
       return;
     }
     
     try {
       updateStatus('Generating enhanced PDF...', 'loading');
       
-      // Prepare data with persona
-      const enhancedDataForPdf = {
+      // Prepare the complete data object with both scraped and enhanced data
+      const completeData = {
         ...window.lastScrapedData,
-        persona: window.lastEnhancedData
+        persona: window.lastEnhancedData || {}
       };
       
       // Send to background script for PDF generation
-      chrome.runtime.sendMessage({
-        action: "generatePDF",
-        data: enhancedDataForPdf,
-        isEnhanced: true
+      const response = await new Promise((resolve) => {
+        chrome.runtime.sendMessage({
+          action: "generatePDF",
+          data: completeData,
+          isEnhanced: true
+        }, resolve);
       });
+      
+      if (response && response.success) {
+        updateStatus('Enhanced PDF generation started!', 'success');
+      } else {
+        updateStatus('Enhanced PDF generation failed: ' + (response?.error || 'Unknown error'), 'error');
+      }
       
     } catch (error) {
       updateStatus('Download error: ' + error.message, 'error');
+    }
+  }
+
+  async function handleDownloadAiPdf() {
+    if (!window.lastScrapedData) {
+      updateStatus('Error: Please scrape a profile first.', 'error');
+      return;
+    }
+    
+    try {
+      updateStatus('Generating AI-powered PDF...', 'loading');
+      
+      // Load OpenAI PDF module if not already loaded
+      if (!generatePDFWithOpenAI) {
+        await loadOpenAIPDFModule();
+      }
+      
+      // Generate PDF with OpenAI
+      await generatePDFWithOpenAI(window.lastScrapedData, window.lastEnhancedData);
+      updateStatus('AI-powered PDF generated successfully!', 'success');
+      
+    } catch (error) {
+      updateStatus('AI PDF generation failed: ' + error.message, 'error');
+    }
+  }
+
+  async function loadOpenAIPDFModule() {
+    try {
+      const module = await import(chrome.runtime.getURL('openai-pdf-generator.js'));
+      generatePDFWithOpenAI = module.generatePDFWithOpenAI;
+    } catch (error) {
+      console.error('Failed to load OpenAI PDF module:', error);
+      throw new Error('Could not load AI PDF generator');
     }
   }
 
@@ -483,14 +549,12 @@ document.addEventListener('DOMContentLoaded', function() {
   function handleScrapingComplete(data) {
     updateStatus('Profile data scraped successfully!', 'success');
     window.lastScrapedData = data;
-    window.scrapedData = data;
     chrome.storage.local.set({ lastScrapedData: data });
   }
 
   function handleGptProcessingComplete(data) {
     updateStatus('Persona created successfully!', 'success');
     window.lastEnhancedData = data;
-    enhancedData = data;
     chrome.storage.local.set({ lastEnhancedData: data });
     exportSection.style.display = 'block';
   }
@@ -500,7 +564,6 @@ document.addEventListener('DOMContentLoaded', function() {
   // --- API Helper Function ---
   async function apiCall(endpoint, options = {}) {
     try {
-      // Determine the base URL based on endpoint type
       let baseUrl;
       if (endpoint.includes('/api/')) {
         baseUrl = CONFIG.BACKEND_URL;
@@ -512,6 +575,7 @@ document.addEventListener('DOMContentLoaded', function() {
       }
       
       const url = `${baseUrl}${endpoint}`;
+      console.log('API Call:', url);
       
       const response = await fetch(url, {
         headers: {
@@ -522,6 +586,10 @@ document.addEventListener('DOMContentLoaded', function() {
         ...options
       });
       
+      if (response.status === 503) {
+        throw new Error('Service temporarily unavailable. Please try again later.');
+      }
+      
       if (!response.ok) {
         const errorText = await response.text();
         throw new Error(`HTTP ${response.status}: ${errorText}`);
@@ -530,6 +598,12 @@ document.addEventListener('DOMContentLoaded', function() {
       return await response.json();
     } catch (error) {
       console.error('API call failed:', error);
+      
+      // Handle specific error types
+      if (error.name === 'TypeError' && error.message.includes('Failed to fetch')) {
+        throw new Error('Network error. Please check your internet connection.');
+      }
+      
       throw error;
     }
   }
