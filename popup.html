@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Airbnb Persona Creator</title>
+  <title>AirPersona</title>
   <style>
     * {
       margin: 0;
@@ -148,6 +148,18 @@
       box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
     }
 
+    /* AI Button Style */
+    .btn-ai {
+      background: linear-gradient(45deg, #ff6b6b, #4ecdc4);
+      color: white;
+      box-shadow: 0 4px 15px rgba(78, 205, 196, 0.3);
+    }
+
+    .btn-ai:hover:not(:disabled) {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(78, 205, 196, 0.4);
+    }
+
     .export-section {
       background: linear-gradient(135deg, #00b894 0%, #00a885 100%);
       border-radius: 15px;
@@ -162,6 +174,40 @@
       font-weight: 600;
       margin-bottom: 15px;
       text-align: center;
+    }
+
+    /* Export Options Layout */
+    .export-options {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-bottom: 15px;
+    }
+
+    .export-divider {
+      text-align: center;
+      margin: 10px 0;
+      color: rgba(255, 255, 255, 0.8);
+      font-size: 12px;
+      position: relative;
+    }
+
+    .export-divider::before,
+    .export-divider::after {
+      content: '';
+      position: absolute;
+      top: 50%;
+      width: 40%;
+      height: 1px;
+      background: rgba(255, 255, 255, 0.3);
+    }
+
+    .export-divider::before {
+      left: 0;
+    }
+
+    .export-divider::after {
+      right: 0;
     }
 
     .status-container {
@@ -352,11 +398,30 @@
       <!-- Export Section (shown after data scraping) -->
       <div id="export-section" class="export-section" style="margin-top: 30px;">
         <div class="export-title">Export Options</div>
-        <button id="download-pdf" class="btn btn-secondary">
-          <span class="icon" aria-hidden="true">📄</span>
-          Download PDF
-        </button>
-        <button id="send-to-server" class="btn btn-secondary">
+        
+        <div class="export-options">
+          <!-- Regular PDF Export 
+          <button id="download-pdf" class="btn btn-secondary">
+            <span class="icon" aria-hidden="true">📄</span>
+            Download Basic PDF
+          </button>-->
+
+          <!-- Enhanced PDF Export -->
+          <button id="download-enhanced-pdf" class="btn btn-secondary">
+            <span class="icon" aria-hidden="true">✨</span>
+            Download Persona
+          </button>
+
+          <div class="export-divider">OR</div>
+
+          <!-- AI PDF Export
+          <button id="download-ai-pdf" class="btn btn-ai">
+            <span class="icon" aria-hidden="true">🤖</span>
+            Generate AI-Powered PDF
+          </button>
+        </div> -->
+
+        <button id="send-to-server" class="btn btn-secondary" style="margin-top: 15px;">
           <span class="icon" aria-hidden="true">🌐</span>
           Send to Server
         </button>
@@ -364,8 +429,6 @@
 
       <button id="logout-btn" class="logout-btn" style="margin-top: 20px;">Logout</button>
     </div>
-
-    <!-- Status Container -->
     <div class="status-container" style="margin-top: 20px;">
       <div class="status-label">Status:</div>
       <div id="status" aria-live="polite">Please login to continue</div>
