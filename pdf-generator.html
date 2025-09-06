@@ -2,283 +2,37 @@
 <html>
 <head>
     <title>PDF Generator</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="libs/jspdf.umd.min.js"></script>
     <style>
         body {
             font-family: Arial, sans-serif;
             padding: 20px;
             text-align: center;
+            background: #f5f5f5;
         }
         .status {
             margin-top: 50px;
             font-size: 16px;
             color: #333;
+            padding: 20px;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .success {
+            color: #28a745;
+        }
+        .error {
+            color: #dc3545;
+        }
+        .loading {
+            color: #007bff;
         }
     </style>
 </head>
 <body>
-    <div class="status">Generating PDF...</div>
+    <div id="status" class="status">Generating PDF, Please wait...</div>
     
-    <script>
-        // Get the data from storage
-        chrome.storage.local.get(['pdfData', 'pdfIsEnhanced'], async function(result) {
-            const statusEl = document.querySelector('.status');
-            
-            if (!result.pdfData) {
-                statusEl.textContent = 'Error: No data available for PDF generation';
-                statusEl.style.color = 'red';
-                chrome.runtime.sendMessage({
-                    action: "pdfGenerationFailed",
-                    message: "No data available for PDF generation"
-                });
-                return;
-            }
-            
-            try {
-                statusEl.textContent = 'Creating PDF document...';
-                
-                // Wait for jsPDF to load
-                await new Promise(resolve => {
-                    if (window.jspdf && window.jspdf.jsPDF) {
-                        resolve();
-                    } else {
-                        // Check every 100ms if jsPDF is loaded
-                        const interval = setInterval(() => {
-                            if (window.jspdf && window.jspdf.jsPDF) {
-                                clearInterval(interval);
-                                resolve();
-                            }
-                        }, 100);
-                        
-                        // Timeout after 5 seconds
-                        setTimeout(() => {
-                            clearInterval(interval);
-                            throw new Error('jsPDF failed to load');
-                        }, 5000);
-                    }
-                });
-                
-                statusEl.textContent = 'Generating content...';
-                
-                // Create the PDF using the global jsPDF object
-                const filename = createPDF(window.jspdf.jsPDF, result.pdfData, result.pdfIsEnhanced);
-                
-                statusEl.textContent = 'PDF created successfully!';
-                
-                // Notify the background script that PDF generation is complete
-                chrome.runtime.sendMessage({
-                    action: "pdfGenerationComplete",
-                    filename: filename
-                });
-                
-                // Close the tab after a short delay
-                setTimeout(() => {
-                    window.close();
-                }, 1000);
-                
-            } catch (error) {
-                console.error('Error generating PDF:', error);
-                statusEl.textContent = 'Error: ' + error.message;
-                statusEl.style.color = 'red';
-                
-                chrome.runtime.sendMessage({
-                    action: "pdfGenerationFailed",
-                    message: error.message
-                });
-                
-                // Close the tab after a short delay
-                setTimeout(() => {
-                    window.close();
-                }, 3000);
-            }
-        });
-
-        // PDF creation function
-        function createPDF(jsPDF, data, isEnhanced = false) {
-            try {
-                const doc = new jsPDF();
-                const config = {
-                    margin: 20,
-                    headerHeight: 60,
-                    maxY: 270,
-                    fontSize: { title: 24, heading: 14, body: 10, small: 8 },
-                    colors: { airbnbRed: [255, 90, 95], black: [0, 0, 0], white: [255, 255, 255], gray: [100, 100, 100] }
-                };
-
-                const pageWidth = doc.internal.pageSize.getWidth();
-                let yPosition = config.margin;
-
-                // Add Airbnb-style header
-                doc.setFillColor(...config.colors.airbnbRed);
-                doc.rect(0, 0, pageWidth, config.headerHeight, 'F');
-
-                doc.setFontSize(config.fontSize.title);
-                doc.setTextColor(...config.colors.white);
-                doc.text('Airbnb Guest Persona', pageWidth / 2, 35, { align: 'center' });
-
-                // Reset text color
-                doc.setTextColor(...config.colors.black);
-                yPosition = 70;
-
-                // Profile Header Section
-                doc.setFontSize(18);
-                doc.text(data.name || 'Unknown', config.margin, yPosition);
-                yPosition += 10;
-
-                doc.setFontSize(12);
-                doc.setTextColor(...config.colors.gray);
-                doc.text(`📍 ${data.location || 'Unknown'}`, config.margin, yPosition);
-                yPosition += 15;
-
-                // Stats Section
-                doc.setFontSize(14);
-                doc.setTextColor(...config.colors.black);
-                doc.text('Profile Statistics', config.margin, yPosition);
-                yPosition += 10;
-
-                doc.setFontSize(10);
-                if (data.stats) {
-                    Object.entries(data.stats).forEach(([key, value]) => {
-                        yPosition = checkPageBreak(doc, yPosition, config);
-                        doc.text(`• ${key.charAt(0).toUpperCase() + key.slice(1)}: ${value}`, config.margin, yPosition);
-                        yPosition += 6;
-                    });
-                }
-                yPosition += 10;
-
-                // About Section
-                if (data.about && data.about.length > 0) {
-                    yPosition = checkPageBreak(doc, yPosition, config, 15);
-                    doc.setFontSize(14);
-                    doc.text('About', config.margin, yPosition);
-                    yPosition += 10;
-
-                    doc.setFontSize(10);
-                    data.about.forEach(item => {
-                        const lines = doc.splitTextToSize(`• ${item}`, pageWidth - (config.margin * 2));
-                        lines.forEach(line => {
-                            yPosition = checkPageBreak(doc, yPosition, config);
-                            doc.text(line, config.margin, yPosition);
-                            yPosition += 6;
-                        });
-                        yPosition += 2;
-                    });
-                    yPosition += 5;
-                }
-
-                // Guest Says Section
-                if (data.guestSays) {
-                    yPosition = checkPageBreak(doc, yPosition, config, 15);
-                    doc.setFontSize(14);
-                    doc.text('Guest Description', config.margin, yPosition);
-                    yPosition += 10;
-
-                    doc.setFontSize(10);
-                    const guestLines = doc.splitTextToSize(data.guestSays, pageWidth - (config.margin * 2));
-                    guestLines.forEach(line => {
-                        yPosition = checkPageBreak(doc, yPosition, config);
-                        doc.text(line, config.margin, yPosition);
-                        yPosition += 6;
-                    });
-                    yPosition += 10;
-                }
-
-                // Interests Section
-                if (data.interests && data.interests.length > 0) {
-                    yPosition = checkPageBreak(doc, yPosition, config, 15);
-                    doc.setFontSize(14);
-                    doc.text('Interests', config.margin, yPosition);
-                    yPosition += 10;
-
-                    doc.setFontSize(10);
-                    const interestsText = doc.splitTextToSize(data.interests.join(', '), pageWidth - (config.margin * 2));
-                    interestsText.forEach(line => {
-                        yPosition = checkPageBreak(doc, yPosition, config);
-                        doc.text(line, config.margin, yPosition);
-                        yPosition += 6;
-                    });
-                    yPosition += 15;
-                }
-
-                // Visited Places Section
-                if (data.visitedPlaces && data.visitedPlaces.length > 0) {
-                    yPosition = checkPageBreak(doc, yPosition, config, 15);
-                    doc.setFontSize(14);
-                    doc.text('Recently Visited Places', config.margin, yPosition);
-                    yPosition += 10;
-
-                    doc.setFontSize(10);
-                    data.visitedPlaces.slice(0, 10).forEach((place) => {
-                        const text = `• ${place.placeName} (${place.monthYear})`;
-                        yPosition = checkPageBreak(doc, yPosition, config);
-                        doc.text(text, config.margin, yPosition);
-                        yPosition += 6;
-                    });
-                    yPosition += 10;
-                }
-
-                // Reviews Section
-                if (data.reviews && data.reviews.length > 0) {
-                    yPosition = checkPageBreak(doc, yPosition, config, 20);
-                    doc.setFontSize(14);
-                    doc.text('Recent Reviews', config.margin, yPosition);
-                    yPosition += 10;
-
-                    doc.setFontSize(10);
-                    data.reviews.slice(0, 5).forEach((review) => {
-                        yPosition = checkPageBreak(doc, yPosition, config, 30);
-                        
-                        doc.setFont(undefined, 'bold');
-                        yPosition = checkPageBreak(doc, yPosition, config);
-                        doc.text(`${review.reviewer} - ${review.date}`, config.margin, yPosition);
-                        yPosition += 6;
-
-                        doc.setFont(undefined, 'normal');
-                        const reviewLines = doc.splitTextToSize(review.content, pageWidth - (config.margin * 2));
-                        reviewLines.forEach(line => {
-                            yPosition = checkPageBreak(doc, yPosition, config);
-                            doc.text(line, config.margin, yPosition);
-                            yPosition += 6;
-                        });
-                        yPosition += 5;
-                    });
-                }
-
-                // Footer
-                const finalY = Math.min(yPosition + 20, 280);
-                doc.setFontSize(8);
-                doc.setTextColor(...config.colors.gray);
-                doc.text(`Profile URL: ${data.profileUrl}`, config.margin, finalY);
-                doc.text(`Generated on: ${new Date().toLocaleString()}`, config.margin, finalY + 5);
-                doc.text(`Verified: ${data.verified ? 'Yes' : 'No'}`, config.margin, finalY + 10);
-
-                // Generate blob and trigger download
-                const pdfBlob = doc.output('blob');
-                const filename = `Airbnb_Persona_${(data.name || 'unknown').replace(/[^a-zA-Z0-9]/g, '_')}.pdf`;
-                
-                // Download the PDF
-                chrome.downloads.download({
-                    url: URL.createObjectURL(pdfBlob),
-                    filename: filename,
-                    saveAs: true
-                });
-                
-                return filename;
-                
-            } catch (error) {
-                console.error('Error creating PDF:', error);
-                throw error;
-            }
-        }
-
-        // Helper function to check for page breaks
-        function checkPageBreak(doc, yPosition, config, threshold = 10) {
-            if (yPosition > config.maxY - threshold) {
-                doc.addPage();
-                return config.margin;
-            }
-            return yPosition;
-        }
-    </script>
+    <script src="pdf-generator.js"></script>
 </body>
 </html>

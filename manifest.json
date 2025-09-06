@@ -7,10 +7,9 @@
     "activeTab",
     "scripting",
     "storage",
-    "downloads",
-    "https://cdnjs.cloudflare.com/ajax/libs/jspdf/*"
+    "downloads"
   ],
-   "action": {
+  "action": {
     "default_popup": "popup.html",
     "default_title": "AIr Persona Creator",
     "default_icon": {
@@ -30,8 +29,7 @@
     "https://bnb-ai-backend.onrender.com/*"
   ],
   "background": {
-    "service_worker": "background.js",
-    "type": "module"
+    "service_worker": "background.js"
   },
   "content_scripts": [
     {
@@ -39,16 +37,18 @@
         "https://*.airbnb.com/users/show/*",
         "https://*.airbnb.co.in/users/show/*"
       ],
-      "js": ["content.js"]
+      "js": ["content.js"],
+      "run_at": "document_idle"
     }
   ],
   "web_accessible_resources": [
     {
-      "resources": ["content.js", "popup.html", "popup.js","pdf-generator.html"],
+      "resources": ["content.js", "popup.html", "popup.js", "popup-styles.js", "libs/*", "libs/jspdf.umd.min.js", "pdf-generator.html", "pdf-generator.js"],
       "matches": ["https://*.airbnb.com/*", "https://*.airbnb.co.in/*"]
     }
   ],
   "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'self'"
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'",
+    "sandbox": "sandbox allow-scripts; script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval'; object-src 'self'"
   }
 }
